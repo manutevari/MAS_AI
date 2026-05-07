@@ -32,6 +32,9 @@ A small Streamlit app for evidence-grounded scientific question answering over u
 - Keep human-in-the-loop approvals and metadata/audit exports.
 - Use combined swarm topologies with agent attention weights, feedback-driven promotion/demotion, and immutable human authority above the orchestrator.
 - Show a toolbox readiness matrix for every major feature, dependency, key, and integration target.
+- Suggest grounded questions from the indexed corpus.
+- Explore the indexed vector/lexical evidence space as auditable knowledge, not unsupported memory.
+- Use Tavily live search as an opt-in evidence source when current information is needed.
 - Download answers as Markdown, JSON, CSV, HTML, or TXT.
 - Persist indexed chunks and query logs in PostgreSQL.
 
@@ -57,6 +60,8 @@ Optional OpenAI-compatible providers:
 - `custom`: `CUSTOM_LLM_BASE_URL`, `CUSTOM_LLM_MODEL`, and `CUSTOM_LLM_API_KEY`
 
 Set provider keys in Streamlit secrets or environment variables.
+
+For live search, set `TAVILY_API_KEY`. The app uses Tavily only when the sidebar toggle is enabled and the query asks for current/latest/live information, or when the `Live search` action is selected.
 
 The sidebar shows the required key input for the selected model, for example `OPENROUTER_API_KEY`, `OPENAI_API_KEY`, `GOOGLE_API_KEY`, `HF_TOKEN`, or a custom key env var.
 
@@ -88,7 +93,7 @@ Any unknown role is normalized to `user`. The parser accepts `role`, `type`, or 
 
 ## Grounding Rule
 
-Model answers are guarded after generation. If the response does not cite uploaded filenames and page/section evidence, the app returns retrieved evidence plus a limitation note instead of allowing an unsupported answer.
+Model answers are guarded after generation. If the response does not cite uploaded filenames and page/section evidence, the app returns retrieved evidence plus a limitation note instead of allowing an unsupported answer. Scientific/research guardrails require units, numeric values, uncertainty, methods, table/figure context, and citation discipline; unsupported causality, safety, clinical relevance, novelty, or statistical significance must not be claimed.
 
 ## India Privacy And DPDP Readiness
 
@@ -160,7 +165,19 @@ The interface is intentionally one-screen:
 - main screen: one `Action` dropdown, one brief/query box, one `Run` button
 - output area: review result, approve, download
 
-Actions include Chat, Agent chat, Website, App blueprint, Codex workflow, Template, Voiceover, Marketing, Media inventory, Integrations, Swarm, Toolbox, Compliance, and Metadata.
+Actions include Chat, Agent chat, Ask suggestions, Vector knowledge, Live search, Website, App blueprint, Codex workflow, Template, Voiceover, Marketing, Media inventory, Integrations, Swarm, Toolbox, Compliance, and Metadata.
+
+## Tavily Live Search
+
+Tavily is integrated as a controlled evidence source:
+
+- requires `TAVILY_API_KEY`
+- uses `https://api.tavily.com/search`
+- does not use Tavily's generated answer as final truth
+- converts Tavily result snippets into cited `live_web` evidence chunks
+- live search is opt-in from the sidebar
+- current-information queries such as latest, current, today, news, rule, guideline, or free model list can trigger it when enabled
+- grounded-answer guardrails still apply
 
 ## Codex-Style Workflow
 

@@ -922,6 +922,52 @@ def build_corpus_from_urls(urls: List[str], jurisdiction: str = "Global/Unknown"
     return rows, f"Indexed {len(rows)} compliant web chunks from {len(urls[:20])} URL(s)."
 
 
+def tavily_search(query: str, max_results: int = 5, topic: str = "general", search_depth: str = "basic") -> Dict[str, Any]:
+    """Live search via Tavily, returning source snippets only when TAVILY_API_KEY is set."""
+
+    key = os.getenv("TAVILY_API_KEY")
+    if not key:
+        return {"ok": False, "answer": "", "results": [], "note": "TAVILY_API_KEY is not set."}
+    try:
+        payload = {
+            "query": query,
+            "topic": topic,
+            "search_depth": search_depth,
+            "max_results": max(1, min(max_results, 10)),
+            "include_answer": False,
+            "include_raw_content": False,
+            "include_images": False,
+        }
+        req = Request(
+            "https://api.tavily.com/search",
+            data=json.dumps(payload).encode("utf-8"),
+            headers={"Content-Type": "application/json", "Authorization": f"Bearer {key}", "User-Agent": USER_AGENT},
+            method="POST",
+        )
+        with urlopen(req, timeout=20) as resp:
+            data = json.loads(resp.read(2_000_000).decode("utf-8"))
+        return {"ok": True, "answer": data.get("answer", ""), "results": data.get("results", []), "note": data.get("request_id", "")}
+    except Exception as exc:
+        return {"ok": False, "answer": "", "results": [], "note": f"Tavily search failed: {exc}"}
+
+
+def build_corpus_from_tavily(query: str, max_results: int = 5, topic: str = "general") -> Tuple[List[Dict[str, Any]], str]:
+    data = tavily_search(query, max_results=max_results, topic=topic)
+    rows: List[Dict[str, Any]] = []
+    if not data.get("ok"):
+        return rows, data.get("note", "Tavily unavailable.")
+    for r in data.get("results", []):
+        url = r.get("url", "tavily-result")
+        title = r.get("title", "Live search result")
+        content = f"{title}\nURL: {url}\n{r.get('content', '')}"
+        rows.extend(asdict(c) | {"numbers": c.numbers, "url": url} for c in _chunk(url, 1, content, "live_web"))
+    return rows, f"Indexed {len(rows)} Tavily live-search chunks from {len(data.get('results', []))} result(s)."
+
+
+def needs_live_search(query: str) -> bool:
+    return bool(re.search(r"\b(latest|today|current|recent|live|now|new|updated|2026|price|news|guideline|rule|law|model list|free model)\b", query or "", re.I))
+
+
 def corpus_id(paths: List[Path]) -> str:
     raw = "|".join(f"{p.name}:{p.stat().st_size if p.exists() else 0}" for p in paths)
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:16]
@@ -1180,6 +1226,59 @@ def retrieve(corpus: List[Dict[str, Any]], query: str, k: int = 8) -> List[Dict[
             score = len(terms & set(re.findall(r"\w+", c["text"].lower())))
             scored.append(dict(c, score=float(score)))
         return sorted(scored, key=lambda x: x["score"], reverse=True)[:k]
+
+
+def ask_suggestions(corpus: List[Dict[str, Any]], n: int = 8) -> List[str]:
+    """Generate simple grounded question suggestions from source sections and numeric evidence."""
+
+    suggestions = []
+    seen = set()
+    for c in corpus:
+        section = str(c.get("section", "Document"))
+        source = str(c.get("source", "source"))
+        kind = str(c.get("kind", "text"))
+        nums = c.get("numbers") or []
+        candidates = [
+            f"What are the key findings in `{source}` section `{section}`?",
+            f"What evidence supports the main claim in `{source}`?",
+            f"What limitations or missing evidence are visible in `{source}`?",
+        ]
+        if kind == "table" or nums:
+            candidates.append(f"Compare the numerical values reported in `{source}` and explain their units.")
+        if re.search(r"\b(method|assay|experiment|protocol|procedure)\b", c.get("text", ""), re.I):
+            candidates.append(f"What methods or experimental procedures are described in `{source}`?")
+        if re.search(r"\b(figure|image|diagram|structure|table)\b", c.get("text", ""), re.I):
+            candidates.append(f"What figures, tables, structures, or visual evidence are described in `{source}`?")
+        for q in candidates:
+            if q not in seen:
+                suggestions.append(q)
+                seen.add(q)
+            if len(suggestions) >= n:
+                return suggestions
+    return suggestions or ["Summarize the uploaded evidence with citations.", "What is not found in the uploaded documents?"]
+
+
+def vector_space_knowledge(corpus: List[Dict[str, Any]], query: str = "entire corpus", k: int = 25) -> Dict[str, Any]:
+    """Expose a broad, auditable view of the indexed vector/lexical evidence space."""
+
+    hits = retrieve(corpus, query or "entire corpus", min(k, max(1, len(corpus))))
+    sections: Dict[str, int] = {}
+    sources: Dict[str, int] = {}
+    numbers: List[str] = []
+    for c in corpus:
+        sections[str(c.get("section", "Document"))] = sections.get(str(c.get("section", "Document")), 0) + 1
+        sources[str(c.get("source", "source"))] = sources.get(str(c.get("source", "source")), 0) + 1
+        numbers.extend(c.get("numbers") or [])
+    return {
+        "summary": {
+            "chunks": len(corpus),
+            "sources": sources,
+            "sections": sections,
+            "sample_numbers": numbers[:60],
+        },
+        "top_evidence": hits,
+        "suggested_questions": ask_suggestions(corpus),
+    }
 
 
 def embedding_retrieve(corpus: List[Dict[str, Any]], query: str, k: int = 8, model: str = "text-embedding-3-large") -> List[Dict[str, Any]]:
@@ -1497,7 +1596,7 @@ def _local_answer(question: str, chunks: List[Dict[str, Any]]) -> str:
     bullets = [f"- `{c['source']}` p.{c['page']} [{c['section']}]: {c['text'][:520]}" for c in chunks[:6]]
     return (
         "### Evidence-grounded scientific answer\n\n"
-        "Interpret this only from the uploaded evidence below; I do not infer beyond it.\n\n"
+        "Interpret this only from the uploaded evidence below. I do not infer beyond it, fabricate values, or convert uncertainty into certainty.\n\n"
         "### Retrieved evidence\n\n" + "\n".join(bullets) +
         "\n\n### Limitations\n\nIf a required value, method, figure, table, or structural comparison is absent above, it is not supported by the uploaded corpus."
     )
@@ -1593,9 +1692,9 @@ def generate(question: str, chunks: List[Dict[str, Any]], external: bool = False
     safe_chunks = redacted_chunks(chunks) if provider != "local" else chunks
     context = format_context(safe_chunks)
     rule = (
-        "You are a scientific RAG assistant. Use only uploaded-document evidence. Do not use memory, assumptions, or outside knowledge. Every factual claim must cite source filename and page/section from the evidence. Preserve units, numeric values, protein/gene names, methods, table/figure context, uncertainty, OCR text, transliteration uncertainty, and citations. If evidence is insufficient, answer: 'Not found in uploaded documents' and list the missing evidence."
+        "You are a scientific RAG assistant with strict research temperament. Use only uploaded-document evidence. Do not use memory, assumptions, or outside knowledge. Every factual claim must cite source filename and page/section from the evidence. Preserve units, numeric values, denominators, sample sizes, protein/gene names, methods, table/figure context, uncertainty, OCR text, transliteration uncertainty, and citations. Separate observation from interpretation. Do not overclaim causality, novelty, safety, clinical relevance, or statistical significance unless the evidence states it. If evidence is insufficient, answer: 'Not found in uploaded documents' and list the missing evidence."
         if not external else
-        "You are a scientific RAG assistant. Use uploaded evidence first. Every document-supported claim must cite source filename and page/section. Label any outside/open-source knowledge separately and never mix it with document-supported claims. Mark transliteration as approximate unless directly supported by OCR text."
+        "You are a scientific RAG assistant with strict research temperament. Use uploaded evidence first. Every document-supported claim must cite source filename and page/section. Label any outside/open-source knowledge separately and never mix it with document-supported claims. Mark transliteration as approximate unless directly supported by OCR text. Do not overclaim causality, safety, clinical relevance, or statistical significance."
     )
     if provider == "local" or not key:
         return {"answer": _local_answer(question, chunks), "provider": "local", "model": "evidence-only"}

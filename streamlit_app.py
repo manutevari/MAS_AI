@@ -15,7 +15,9 @@ import streamlit.components.v1 as components
 from multi_agent import (
     answer_rag_chat,
     answer_with_agent_pipeline_from_corpus,
+    ask_suggestions,
     build_corpus_from_paths,
+    build_corpus_from_tavily,
     build_corpus_from_urls,
     build_website,
     codex_workflow_brief,
@@ -31,6 +33,7 @@ from multi_agent import (
     log_query_pg,
     marketing_plan,
     media_inventory,
+    needs_live_search,
     ocr_model_options,
     render_template,
     retrieve,
@@ -46,6 +49,7 @@ from multi_agent import (
     tts_guidance,
     update_swarm_feedback,
     upsert_integrations_pg,
+    vector_space_knowledge,
 )
 
 
@@ -63,6 +67,7 @@ def secret_env() -> None:
         "CUSTOM_LLM_BASE_URL",
         "CUSTOM_LLM_MODEL",
         "DATABASE_URL",
+        "TAVILY_API_KEY",
     ):
         if key in st.secrets and not os.getenv(key):
             os.environ[key] = str(st.secrets[key])
@@ -130,6 +135,10 @@ with st.sidebar:
     jurisdiction = st.selectbox("Jurisdiction", ["India", "EU/EEA", "California", "UK", "Global/Unknown"])
     os.environ["COMPLIANCE_JURISDICTION"] = jurisdiction
     fetch_ok = st.checkbox("I confirm URL fetching is lawful and robots.txt/site terms permit it")
+    tavily_key = st.text_input("Tavily key", os.getenv("TAVILY_API_KEY", ""), type="password")
+    if tavily_key:
+        os.environ["TAVILY_API_KEY"] = tavily_key
+    use_tavily = st.checkbox("Use Tavily live search when needed")
 
     st.divider()
     extra_models = st.text_area("Extra LLMs", placeholder="Label, provider, model, base_url, key_env")
@@ -171,8 +180,8 @@ with st.sidebar:
 
 paths = [save_upload(f) for f in uploads] if uploads else ([Path(local_path)] if local_path else [])
 web_urls = [u.strip() for u in urls.splitlines() if u.strip()] if fetch_ok else []
-if not paths and not web_urls:
-    st.info("Upload files or add permitted URLs.")
+if not paths and not web_urls and not use_tavily:
+    st.info("Upload files, add permitted URLs, or enable Tavily live search.")
     st.stop()
 
 with st.spinner("Indexing evidence..."):
@@ -192,6 +201,9 @@ action = st.selectbox(
     [
         "Chat",
         "Agent chat",
+        "Ask suggestions",
+        "Vector knowledge",
+        "Live search",
         "Website",
         "App blueprint",
         "Codex workflow",
@@ -211,6 +223,14 @@ audio = st.file_uploader("Optional speech input", type=["wav", "mp3", "m4a", "og
 if audio and st.button("Transcribe"):
     brief = transcribe_audio(audio.getvalue(), audio.name, os.getenv("STT_ENGINE", "manual"), os.getenv("OCR_LANG", "eng").split("+")[0])
     st.text_area("Transcript", brief, height=100)
+
+if use_tavily and brief and (action == "Live search" or needs_live_search(brief)):
+    with st.spinner("Adding Tavily live evidence..."):
+        live_corpus, live_summary = build_corpus_from_tavily(brief, max_results=5)
+        corpus.extend(live_corpus)
+        summary += " " + live_summary
+        metadata = corpus_metadata(corpus, cid)
+        st.caption(live_summary)
 
 with st.expander("Evidence preview"):
     hits = embedding_retrieve(corpus, brief or "summary", top_k) if retrieval.startswith("OpenAI") else retrieve(corpus, brief or "summary", top_k)
@@ -239,6 +259,26 @@ elif action == "Agent chat":
     st.markdown(result["answer"])
     st.json(result.get("conversation", []))
     show_download("agent answer", json.dumps(result, indent=2), "agent_answer.json", "application/json")
+
+elif action == "Ask suggestions":
+    out = ask_suggestions(corpus)
+    st.markdown("\n".join(f"- {q}" for q in out))
+    show_download("ask suggestions", json.dumps(out, indent=2), "ask_suggestions.json", "application/json")
+
+elif action == "Vector knowledge":
+    out = vector_space_knowledge(corpus, brief or "entire corpus", k=25)
+    st.json(out["summary"])
+    with st.expander("Top evidence"):
+        st.text(format_context(out["top_evidence"], max_chars=14000))
+    st.markdown("**Suggested questions**")
+    st.markdown("\n".join(f"- {q}" for q in out["suggested_questions"]))
+    show_download("vector knowledge", json.dumps(out, indent=2), "vector_knowledge.json", "application/json")
+
+elif action == "Live search":
+    out = vector_space_knowledge(corpus, brief or "live search", k=25)
+    st.json(out["summary"])
+    st.text(format_context(out["top_evidence"], max_chars=14000))
+    show_download("live search evidence", json.dumps(out, indent=2), "live_search_evidence.json", "application/json")
 
 elif action == "Website":
     page = build_website(brief, corpus, "Evidence Studio", "Evidence-grounded publication")
