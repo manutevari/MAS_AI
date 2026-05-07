@@ -219,10 +219,37 @@ action = st.selectbox(
     ],
 )
 brief = st.text_area("Brief / query", height=120, placeholder="Ask or describe what you want.")
-audio = st.file_uploader("Optional speech input", type=["wav", "mp3", "m4a", "ogg", "webm"])
-if audio and st.button("Transcribe"):
-    brief = transcribe_audio(audio.getvalue(), audio.name, os.getenv("STT_ENGINE", "manual"), os.getenv("OCR_LANG", "eng").split("+")[0])
-    st.text_area("Transcript", brief, height=100)
+
+with st.container(border=True):
+    st.caption("Try asking")
+    suggestions = ask_suggestions(corpus, 4)
+    cols = st.columns(2)
+    for i, q in enumerate(suggestions):
+        if cols[i % 2].button(q, key=f"suggest_{i}"):
+            brief = q
+            st.session_state["suggested_brief"] = q
+    brief = st.session_state.get("suggested_brief", brief)
+    mic_audio = st.audio_input("Mic") if hasattr(st, "audio_input") else None
+    audio = st.file_uploader("Upload audio", type=["wav", "mp3", "m4a", "ogg", "webm"])
+    extra_files = st.file_uploader(
+        "Upload more files",
+        type=["zip", "pdf", "txt", "md", "csv", "tsv", "xlsx", "xls", "json", "png", "jpg", "jpeg", "webp"],
+        accept_multiple_files=True,
+        key="inline_more_files",
+    )
+    if extra_files:
+        more_paths = [save_upload(f) for f in extra_files]
+        more_corpus, more_summary = build_corpus_from_paths(more_paths)
+        corpus.extend(more_corpus)
+        summary += " " + more_summary
+        metadata = corpus_metadata(corpus, cid)
+        st.caption(more_summary)
+    speech = mic_audio or audio
+    if speech and st.button("Transcribe"):
+        name = getattr(speech, "name", "mic_input.wav")
+        brief = transcribe_audio(speech.getvalue(), name, os.getenv("STT_ENGINE", "manual"), os.getenv("OCR_LANG", "eng").split("+")[0])
+        st.session_state["suggested_brief"] = brief
+        st.text_area("Transcript", brief, height=100)
 
 if use_tavily and brief and (action == "Live search" or needs_live_search(brief)):
     with st.spinner("Adding Tavily live evidence..."):

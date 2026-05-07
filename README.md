@@ -25,6 +25,7 @@ A small Streamlit app for evidence-grounded scientific question answering over u
 - Select OCR models from a dropdown with free/paid and key-required labels.
 - Select transliteration strategy while keeping answers grounded in uploaded OCR/document evidence.
 - Use speech-to-text as a typing helper for queries.
+- Record query audio with the browser microphone when the deployed Streamlit version supports `st.audio_input`.
 - Generate safe voiceover scripts for free and paid text-to-speech models.
 - Include India DPDP-oriented privacy controls: lawful-basis confirmation, cloud-processing gate, and PII redaction.
 - Ingest compliant web URLs with robots.txt checks, jurisdiction selection, redaction, and source citations.
@@ -33,6 +34,7 @@ A small Streamlit app for evidence-grounded scientific question answering over u
 - Use combined swarm topologies with agent attention weights, feedback-driven promotion/demotion, and immutable human authority above the orchestrator.
 - Show a toolbox readiness matrix for every major feature, dependency, key, and integration target.
 - Suggest grounded questions from the indexed corpus.
+- Show `Try asking` suggestions directly under the query box with mic and upload controls.
 - Explore the indexed vector/lexical evidence space as auditable knowledge, not unsupported memory.
 - Use Tavily live search as an opt-in evidence source when current information is needed.
 - Download answers as Markdown, JSON, CSV, HTML, or TXT.
@@ -297,6 +299,7 @@ The grounding guard still applies: transliterated text must be treated as OCR-de
 
 The chat tab includes a speech input helper for typing queries:
 
+- Browser microphone input: available when Streamlit supports `st.audio_input`.
 - Manual transcript paste: free and always available.
 - OpenAI Whisper API: paid/cloud, implemented through `OPENAI_API_KEY` and `OPENAI_STT_MODEL`.
 - Whisper local/faster-whisper: free/local, selectable integration target.
