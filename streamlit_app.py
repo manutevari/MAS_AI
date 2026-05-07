@@ -180,10 +180,6 @@ with st.sidebar:
 
 paths = [save_upload(f) for f in uploads] if uploads else ([Path(local_path)] if local_path else [])
 web_urls = [u.strip() for u in urls.splitlines() if u.strip()] if fetch_ok else []
-if not paths and not web_urls and not use_tavily:
-    st.info("Upload files, add permitted URLs, or enable Tavily live search.")
-    st.stop()
-
 with st.spinner("Indexing evidence..."):
     corpus, summary = build_corpus_from_paths(paths) if paths else ([], "No files.")
     if web_urls:
@@ -191,7 +187,8 @@ with st.spinner("Indexing evidence..."):
         corpus.extend(web_corpus)
         summary += " " + web_summary
     cid = corpus_id(paths)
-    save_corpus_pg(corpus, cid)
+    if corpus:
+        save_corpus_pg(corpus, cid)
 
 metadata = corpus_metadata(corpus, cid)
 st.success(summary)
@@ -260,23 +257,26 @@ if use_tavily and brief and (action == "Live search" or needs_live_search(brief)
         st.caption(live_summary)
 
 with st.expander("Evidence preview"):
-    hits = embedding_retrieve(corpus, brief or "summary", top_k) if retrieval.startswith("OpenAI") else retrieve(corpus, brief or "summary", top_k)
-    st.text(format_context(hits))
+    hits = embedding_retrieve(corpus, brief or "summary", top_k) if corpus and retrieval.startswith("OpenAI") else retrieve(corpus, brief or "summary", top_k)
+    st.text(format_context(hits) if hits else "No indexed evidence yet. Enable Tavily live search or upload documents for grounded evidence.")
 
 run = st.button("Run", type="primary")
 if not run:
     st.stop()
 
 if action == "Chat":
-    result = asyncio.run(
-        answer_rag_chat(
-            brief,
-            corpus,
-            provider=provider,
-            top_k=top_k,
-            retrieval_engine="openai_embeddings" if retrieval.startswith("OpenAI") else "tfidf",
+    if not corpus and not use_tavily:
+        result = {"answer": "Live chat is available, but no evidence is indexed. Upload documents or enable Tavily live search for grounded answers.", "sources": [], "provider": "local", "model": "no-evidence"}
+    else:
+        result = asyncio.run(
+            answer_rag_chat(
+                brief,
+                corpus,
+                provider=provider,
+                top_k=top_k,
+                retrieval_engine="openai_embeddings" if retrieval.startswith("OpenAI") else "tfidf",
+            )
         )
-    )
     st.markdown(result["answer"])
     log_query_pg(cid, brief, result["answer"], result.get("provider", ""), result.get("model", ""))
     show_download("answer", json.dumps(result, indent=2), "answer.json", "application/json")

@@ -35,6 +35,7 @@ A small Streamlit app for evidence-grounded scientific question answering over u
 - Show a toolbox readiness matrix for every major feature, dependency, key, and integration target.
 - Suggest grounded questions from the indexed corpus.
 - Show `Try asking` suggestions directly under the query box with mic and upload controls.
+- Live chat can open without uploaded documents; upload files or enable Tavily for grounded evidence.
 - Explore the indexed vector/lexical evidence space as auditable knowledge, not unsupported memory.
 - Use Tavily live search as an opt-in evidence source when current information is needed.
 - Download answers as Markdown, JSON, CSV, HTML, or TXT.
