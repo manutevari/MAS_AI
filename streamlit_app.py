@@ -56,6 +56,25 @@ from multi_agent import (
 
 st.set_page_config(page_title="Scientific RAG", layout="wide")
 
+st.markdown(
+    """
+<style>
+    .block-container {padding-top: 1.4rem; max-width: 1280px;}
+    h1 {font-size: 2.2rem; margin-bottom: .2rem;}
+    [data-testid="stSidebar"] {background: #f7f9fb;}
+    div[data-testid="stMetric"] {background: #ffffff; border: 1px solid #e5e7eb; border-radius: 8px; padding: 12px;}
+    .hero {border: 1px solid #e5e7eb; border-radius: 10px; padding: 18px 20px; background: linear-gradient(135deg,#ffffff,#f5fbff);}
+    .chip {display:inline-block; padding:4px 9px; border:1px solid #d8dee6; border-radius:999px; margin:4px 6px 4px 0; background:#fff; font-size:12px;}
+    .danger {border-color:#f1b4b4; background:#fff5f5;}
+    .ok {border-color:#a7e0bd; background:#f1fff6;}
+    .muted {color:#64748b;}
+    div.stButton > button {border-radius: 8px; min-height: 38px;}
+    div.stDownloadButton > button {border-radius: 8px; min-height: 38px; background:#0f766e; color:white;}
+</style>
+""",
+    unsafe_allow_html=True,
+)
+
 
 def secret_env() -> None:
     for key in (
@@ -124,8 +143,15 @@ def apply_provider(choice: Dict[str, str]) -> str:
 
 secret_env()
 
-st.title("Scientific RAG")
-st.caption("One screen. Upload evidence. Choose action. Human approves final output.")
+st.markdown(
+    """
+<div class="hero">
+  <h1>Scientific RAG Studio</h1>
+  <div class="muted">Evidence-grounded chat, live search, builders, templates, swarm governance, and human approval in one focused interface.</div>
+</div>
+""",
+    unsafe_allow_html=True,
+)
 
 with st.sidebar:
     st.header("Setup")
@@ -206,6 +232,22 @@ with st.spinner("Indexing evidence..."):
 
 metadata = corpus_metadata(corpus, cid)
 st.success(summary)
+status_cols = st.columns(4)
+status_cols[0].metric("Chunks", len(corpus))
+status_cols[1].metric("Sources", metadata.get("source_count", 0))
+status_cols[2].metric("Provider", provider)
+status_cols[3].metric("Jurisdiction", jurisdiction)
+st.markdown(
+    "".join(
+        [
+            f'<span class="chip {"ok" if os.getenv("HUMAN_REVIEW_CONFIRMED") == "true" else "danger"}">Human review {"on" if os.getenv("HUMAN_REVIEW_CONFIRMED") == "true" else "pending"}</span>',
+            f'<span class="chip {"ok" if os.getenv("DPDP_REDACT") == "true" else "danger"}">Redaction {os.getenv("DPDP_REDACT")}</span>',
+            f'<span class="chip">OCR {os.getenv("OCR_ENGINE", "tesseract")}</span>',
+            f'<span class="chip">STT {os.getenv("STT_ENGINE", "manual")}</span>',
+        ]
+    ),
+    unsafe_allow_html=True,
+)
 
 if "brief_text" not in st.session_state:
     st.session_state["brief_text"] = ""
@@ -232,6 +274,9 @@ action = st.selectbox(
         "Metadata",
     ],
 )
+if st.session_state.get("pending_brief_text"):
+    st.session_state["brief_text"] = st.session_state.pop("pending_brief_text")
+st.markdown("### Ask")
 brief = st.text_area("Brief / query", height=120, placeholder="Ask or describe what you want.", key="brief_text")
 
 with st.container(border=True):
@@ -262,7 +307,7 @@ with st.container(border=True):
     if speech and st.button("Transcribe"):
         name = getattr(speech, "name", "mic_input.wav")
         transcript = transcribe_audio(speech.getvalue(), name, os.getenv("STT_ENGINE", "manual"), os.getenv("OCR_LANG", "eng").split("+")[0])
-        st.session_state["brief_text"] = transcript
+        st.session_state["pending_brief_text"] = transcript
         st.rerun()
 
 if use_tavily and brief and (action == "Live search" or needs_live_search(brief)):
@@ -273,7 +318,7 @@ if use_tavily and brief and (action == "Live search" or needs_live_search(brief)
         metadata = corpus_metadata(corpus, cid)
         st.caption(live_summary)
 
-with st.expander("Evidence preview"):
+with st.expander("Evidence preview", expanded=False):
     hits = embedding_retrieve(corpus, brief or "summary", top_k) if corpus and retrieval.startswith("OpenAI") else retrieve(corpus, brief or "summary", top_k)
     st.text(format_context(hits) if hits else "No indexed evidence yet. Enable Tavily live search or upload documents for grounded evidence.")
 
