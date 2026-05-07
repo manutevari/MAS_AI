@@ -19,13 +19,13 @@ A small Streamlit app for evidence-grounded scientific question answering over u
 - Manage a media inventory for tables, figures, images, diagrams, charts, and assets.
 - Maintain a PostgreSQL-backed integration/model registry for free, paid, new, or underrated apps and services.
 - Use a custom OpenAI-compatible LLM endpoint so newly available model routers can be added without code changes.
-- Choose from one LLM dropdown containing free, free-tier, paid, live OpenRouter catalog entries, and custom OpenAI-compatible models.
-- Paste the required key directly under the selected model; the key field changes according to the selected provider.
+- Choose from segregated LLM dropdowns: `Free / no key` and `Paid / key required`.
+- Key fields appear only for paid/key-required selections.
 - Configure multilingual OCR with `OCR_LANG` for precise text extraction when Tesseract language packs are installed.
 - Select OCR models from a dropdown with free/paid and key-required labels.
 - Select transliteration strategy while keeping answers grounded in uploaded OCR/document evidence.
 - Use speech-to-text as a typing helper for queries.
-- Record query audio with the browser microphone when the deployed Streamlit version supports `st.audio_input`.
+- Record query audio with the browser microphone and use the transcript as typed query text.
 - Generate safe voiceover scripts for free and paid text-to-speech models.
 - Include India DPDP-oriented privacy controls: lawful-basis confirmation, cloud-processing gate, and PII redaction.
 - Ingest compliant web URLs with robots.txt checks, jurisdiction selection, redaction, and source citations.
@@ -60,6 +60,7 @@ Optional OpenAI-compatible providers:
 - `grok`: `GROK_API_KEY`
 - `huggingface`: `HF_TOKEN`
 - `openrouter`: `OPENROUTER_API_KEY`
+- `ollama`: `OLLAMA_BASE_URL`, `OLLAMA_MODEL`, no real key required
 - `custom`: `CUSTOM_LLM_BASE_URL`, `CUSTOM_LLM_MODEL`, and `CUSTOM_LLM_API_KEY`
 
 Set provider keys in Streamlit secrets or environment variables.
@@ -67,6 +68,7 @@ Set provider keys in Streamlit secrets or environment variables.
 For live search, set `TAVILY_API_KEY`. The app uses Tavily only when the sidebar toggle is enabled and the query asks for current/latest/live information, or when the `Live search` action is selected.
 
 The sidebar shows the required key input for the selected model, for example `OPENROUTER_API_KEY`, `OPENAI_API_KEY`, `GOOGLE_API_KEY`, `HF_TOKEN`, or a custom key env var.
+For no-key free/local models, the key input is hidden. Password fields mask keys, and metadata exports never include raw keys; the app only displays a short irreversible fingerprint when a key is set.
 
 The LLM dropdown tries to load OpenRouter's live model catalog and labels entries as free or paid/key-required. If live loading is unavailable, built-in fallback choices remain available. Extra models can be added in this format:
 
@@ -77,6 +79,15 @@ Label, provider, model, base_url, key_env
 Free model availability changes frequently. OpenRouter’s `openrouter/free` router is included as the lowest-maintenance option because it selects from currently available free models.
 
 The custom provider supports any OpenAI-compatible API. That is the practical way to use newly released or underrated LLM providers without constantly editing the app.
+
+Ollama is available as a free/no-key local provider through its OpenAI-compatible endpoint:
+
+```toml
+OLLAMA_BASE_URL = "http://localhost:11434/v1"
+OLLAMA_MODEL = "llama3.1"
+```
+
+Run Ollama on the same machine or network as Streamlit and pull a model first, for example `ollama pull llama3.1`.
 
 ## Router Messages
 

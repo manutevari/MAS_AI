@@ -13,6 +13,7 @@ import json
 import os
 import re
 import hashlib
+import base64
 import zipfile
 from datetime import datetime, timezone
 from dataclasses import dataclass, asdict
@@ -33,7 +34,7 @@ except Exception:  # pragma: no cover
 
 
 EXTS = {".pdf", ".txt", ".md", ".csv", ".tsv", ".xlsx", ".xls", ".json", ".png", ".jpg", ".jpeg", ".webp"}
-PROVIDERS = {"local", "openai", "grok", "gemini", "huggingface", "openrouter", "custom"}
+PROVIDERS = {"local", "ollama", "openai", "grok", "gemini", "huggingface", "openrouter", "custom"}
 DATABASE_URL = "DATABASE_URL"
 USER_AGENT = "ScientificRAG-CompliantFetcher/1.0"
 
@@ -76,6 +77,27 @@ FREE_LLM_MODELS = [
         "provider": "local",
         "model": "evidence-only",
         "base_url": "",
+        "key_env": "",
+    },
+    {
+        "label": "Ollama local - llama3.1",
+        "provider": "ollama",
+        "model": "llama3.1",
+        "base_url": "http://localhost:11434/v1",
+        "key_env": "",
+    },
+    {
+        "label": "Ollama local - qwen2.5",
+        "provider": "ollama",
+        "model": "qwen2.5",
+        "base_url": "http://localhost:11434/v1",
+        "key_env": "",
+    },
+    {
+        "label": "Ollama local - mistral",
+        "provider": "ollama",
+        "model": "mistral",
+        "base_url": "http://localhost:11434/v1",
         "key_env": "",
     },
     {
@@ -684,6 +706,19 @@ def llm_model_catalog(extra: str = "") -> List[Dict[str, str]]:
             "requires_key": "no",
         }
     ]
+    rows.extend(
+        {
+            "label": f"FREE | Ollama | {item['model']}",
+            "provider": "ollama",
+            "model": item["model"],
+            "base_url": item["base_url"],
+            "key_env": "",
+            "pricing": "free/local",
+            "requires_key": "no",
+        }
+        for item in FREE_LLM_MODELS
+        if item.get("provider") == "ollama"
+    )
     rows.extend(openrouter_catalog())
     if not any(r["model"] == "openrouter/free" for r in rows):
         for item in free_llm_models(extra):
@@ -1005,7 +1040,17 @@ def corpus_metadata(corpus: List[Dict[str, Any]], cid: str = "") -> Dict[str, An
         "compliance_jurisdiction": os.getenv("COMPLIANCE_JURISDICTION", "Global/Unknown"),
         "human_review_confirmed": os.getenv("HUMAN_REVIEW_CONFIRMED", "false"),
         "export_approval_required": os.getenv("REQUIRE_HUMAN_EXPORT_APPROVAL", "true"),
+        "keys_exported": "never",
     }
+
+
+def encrypt_secret_label(value: str) -> str:
+    """One-way-ish display helper: hide secrets while proving a value exists."""
+
+    if not value:
+        return ""
+    digest = hashlib.sha256(value.encode("utf-8")).digest()
+    return "set:" + base64.urlsafe_b64encode(digest[:9]).decode("ascii").rstrip("=")
 
 
 def pg_conn() -> Any:
@@ -1679,6 +1724,8 @@ def _provider() -> Tuple[str, str, str, str | None]:
         return p, os.getenv("HF_MODEL", "meta-llama/Llama-3.1-8B-Instruct"), os.getenv("HF_BASE_URL", "https://router.huggingface.co/v1"), os.getenv("HF_TOKEN")
     if p == "openrouter":
         return p, os.getenv("OPENROUTER_MODEL", "meta-llama/llama-3.1-8b-instruct"), os.getenv("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1"), os.getenv("OPENROUTER_API_KEY")
+    if p == "ollama":
+        return p, os.getenv("OLLAMA_MODEL", "llama3.1"), os.getenv("OLLAMA_BASE_URL", "http://localhost:11434/v1"), os.getenv("OLLAMA_API_KEY", "ollama")
     if p == "custom":
         return p, os.getenv("CUSTOM_LLM_MODEL", "model-name"), os.getenv("CUSTOM_LLM_BASE_URL", ""), os.getenv(os.getenv("CUSTOM_LLM_API_KEY_ENV", "CUSTOM_LLM_API_KEY"))
     return p, os.getenv("OPENAI_MODEL", "gpt-4o-mini"), os.getenv("OPENAI_BASE_URL", ""), os.getenv("OPENAI_API_KEY")

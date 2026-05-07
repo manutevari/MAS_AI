@@ -26,6 +26,7 @@ from multi_agent import (
     corpus_metadata,
     emergent_app_blueprint,
     embedding_retrieve,
+    encrypt_secret_label,
     format_context,
     integration_registry,
     llm_model_catalog,
@@ -110,6 +111,9 @@ def apply_provider(choice: Dict[str, str]) -> str:
         os.environ["CUSTOM_LLM_BASE_URL"] = choice["base_url"]
         if choice.get("key_env"):
             os.environ["CUSTOM_LLM_API_KEY_ENV"] = choice["key_env"]
+    if provider == "ollama":
+        os.environ["OLLAMA_MODEL"] = choice["model"]
+        os.environ["OLLAMA_BASE_URL"] = choice["base_url"] or "http://localhost:11434/v1"
     if provider == "openai":
         os.environ["OPENAI_MODEL"] = choice["model"]
     if provider == "grok":
@@ -143,16 +147,26 @@ with st.sidebar:
     st.divider()
     extra_models = st.text_area("Extra LLMs", placeholder="Label, provider, model, base_url, key_env")
     llm_rows = llm_model_catalog(extra_models)
-    llm_choice = st.selectbox("LLM model", [m["label"] for m in llm_rows])
-    selected_llm = llm_rows[[m["label"] for m in llm_rows].index(llm_choice)]
+    free_rows = [m for m in llm_rows if m.get("requires_key") == "no"]
+    paid_rows = [m for m in llm_rows if m not in free_rows]
+    model_group = st.radio("Model group", ["Free / no key", "Paid / key required"], horizontal=False)
+    active_rows = free_rows if model_group.startswith("Free") else paid_rows
+    llm_choice = st.selectbox("LLM model", [m["label"] for m in active_rows])
+    selected_llm = active_rows[[m["label"] for m in active_rows].index(llm_choice)]
     provider = apply_provider(selected_llm)
     key_env = selected_llm.get("key_env", "")
-    if key_env:
+    if model_group.startswith("Paid") and key_env:
         pasted_key = st.text_input(f"Key for {key_env}", os.getenv(key_env, ""), type="password")
         if pasted_key:
             os.environ[key_env] = pasted_key
+        if os.getenv(key_env):
+            st.caption(f"{key_env}: {encrypt_secret_label(os.getenv(key_env, ''))}")
+    else:
+        st.caption("Selected model does not require a key.")
 
     with st.expander("Custom OpenAI-compatible endpoint"):
+        os.environ["OLLAMA_BASE_URL"] = st.text_input("Ollama base URL", os.getenv("OLLAMA_BASE_URL", "http://localhost:11434/v1"))
+        os.environ["OLLAMA_MODEL"] = st.text_input("Ollama model", os.getenv("OLLAMA_MODEL", "llama3.1"))
         os.environ["CUSTOM_LLM_BASE_URL"] = st.text_input("Custom base URL", os.getenv("CUSTOM_LLM_BASE_URL", ""))
         os.environ["CUSTOM_LLM_MODEL"] = st.text_input("Custom model", os.getenv("CUSTOM_LLM_MODEL", ""))
         custom_key_env = st.text_input("Custom key env", os.getenv("CUSTOM_LLM_API_KEY_ENV", "CUSTOM_LLM_API_KEY"))
@@ -193,6 +207,9 @@ with st.spinner("Indexing evidence..."):
 metadata = corpus_metadata(corpus, cid)
 st.success(summary)
 
+if "brief_text" not in st.session_state:
+    st.session_state["brief_text"] = ""
+
 action = st.selectbox(
     "Action",
     [
@@ -215,7 +232,7 @@ action = st.selectbox(
         "Metadata",
     ],
 )
-brief = st.text_area("Brief / query", height=120, placeholder="Ask or describe what you want.")
+brief = st.text_area("Brief / query", height=120, placeholder="Ask or describe what you want.", key="brief_text")
 
 with st.container(border=True):
     st.caption("Try asking")
@@ -244,9 +261,9 @@ with st.container(border=True):
     speech = mic_audio or audio
     if speech and st.button("Transcribe"):
         name = getattr(speech, "name", "mic_input.wav")
-        brief = transcribe_audio(speech.getvalue(), name, os.getenv("STT_ENGINE", "manual"), os.getenv("OCR_LANG", "eng").split("+")[0])
-        st.session_state["suggested_brief"] = brief
-        st.text_area("Transcript", brief, height=100)
+        transcript = transcribe_audio(speech.getvalue(), name, os.getenv("STT_ENGINE", "manual"), os.getenv("OCR_LANG", "eng").split("+")[0])
+        st.session_state["brief_text"] = transcript
+        st.rerun()
 
 if use_tavily and brief and (action == "Live search" or needs_live_search(brief)):
     with st.spinner("Adding Tavily live evidence..."):
