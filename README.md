@@ -14,6 +14,8 @@ Core capabilities:
 - strict anti-hallucination guardrails with citations and missing-evidence handling
 - NotebookLM-style quizzes, flashcards, and question papers from uploaded sources
 - website, app blueprint, marketing, media, voiceover, and template generation
+- WhatsApp Business automation drafts, payloads, policy checklist, and optional Cloud API send
+- prompt-aware website builder with critic review, SEO suggestions, pro tips, media/audio sections, and source evidence
 - segregated free/no-key and paid/key-required model selectors
 - Ollama, OpenAI, Claude, Grok, Gemini, Hugging Face, OpenRouter, and custom endpoints
 - India DPDP plus international compliance controls
@@ -219,6 +221,34 @@ Tavily is integrated as a controlled evidence source:
 - live search is opt-in from the sidebar
 - current-information queries such as latest, current, today, news, rule, guideline, or free model list can trigger it when enabled
 - grounded-answer guardrails still apply
+
+## WhatsApp Automation
+
+The `WhatsApp automation` action supports compliant outreach workflows:
+
+- draft WhatsApp-safe outreach copy
+- prepare approved-template payload drafts
+- prepare Cloud API text payload drafts
+- include website/service URLs
+- redact common Indian personal identifiers
+- require human opt-in/compliance confirmation before optional sending
+- optional send through official Meta WhatsApp Cloud API
+
+Required secrets for sending:
+
+```toml
+WHATSAPP_TOKEN = ""
+WHATSAPP_PHONE_NUMBER_ID = ""
+WHATSAPP_BUSINESS_ACCOUNT_ID = ""
+```
+
+Policy notes:
+
+- Use only opted-in recipients.
+- Business-initiated messages generally require approved templates.
+- Free-form replies are for the customer-service window.
+- Do not use the tool for unsolicited spam.
+- Review Meta WhatsApp Business Platform policies, template rules, pricing, local privacy law, and institutional/government communication rules before sending.
 
 ## Codex-Style Workflow
 

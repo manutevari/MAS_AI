@@ -495,6 +495,78 @@ def tts_guidance(text: str, engine: str, language: str = "Hindi/English") -> Dic
     }
 
 
+def whatsapp_toolkit(message: str, service_url: str = "", audience: str = "opted-in users") -> Dict[str, Any]:
+    pii = detect_personal_data(message)
+    safe_message = redact_personal_data(message) if pii else message
+    return {
+        "channel": "WhatsApp Business Platform / Cloud API",
+        "audience": audience,
+        "safe_message": safe_message,
+        "service_url": service_url,
+        "policy_guardrails": [
+            "Use only WhatsApp Business Platform or authorized providers.",
+            "Send business-initiated messages only with approved templates where required.",
+            "Respect the 24-hour customer service window for free-form replies.",
+            "Use opt-in contacts only; keep consent and unsubscribe/stop handling.",
+            "Do not use WhatsApp for unsolicited bulk spam.",
+            "Do not expose sensitive personal data in messages or media links.",
+            "Review Meta Commerce, Business, and Messaging policies before launch.",
+            "Keep a human review and escalation path for sensitive or government/institutional outreach.",
+        ],
+        "template_draft": {
+            "name": "service_update_outreach",
+            "category": "UTILITY",
+            "language": "en",
+            "body": safe_message[:900] + ("\n\nLink: " + service_url if service_url else ""),
+            "buttons": [{"type": "URL", "text": "Open", "url": service_url}] if service_url else [],
+        },
+        "cloud_api_text_payload": {
+            "messaging_product": "whatsapp",
+            "recipient_type": "individual",
+            "to": "{{recipient_phone_e164}}",
+            "type": "text",
+            "text": {"preview_url": bool(service_url), "body": safe_message + (f"\n{service_url}" if service_url else "")},
+        },
+        "cloud_api_template_payload": {
+            "messaging_product": "whatsapp",
+            "to": "{{recipient_phone_e164}}",
+            "type": "template",
+            "template": {
+                "name": "{{approved_template_name}}",
+                "language": {"code": "en"},
+                "components": [{"type": "body", "parameters": [{"type": "text", "text": safe_message[:900]}]}],
+            },
+        },
+        "required_env": ["WHATSAPP_TOKEN", "WHATSAPP_PHONE_NUMBER_ID", "WHATSAPP_BUSINESS_ACCOUNT_ID"],
+        "note": "Drafts only unless official WhatsApp Cloud API credentials are configured and the recipient has opted in.",
+    }
+
+
+def whatsapp_send_text(to: str, body: str) -> Dict[str, Any]:
+    token = os.getenv("WHATSAPP_TOKEN")
+    phone_id = os.getenv("WHATSAPP_PHONE_NUMBER_ID")
+    if not token or not phone_id:
+        return {"ok": False, "note": "WHATSAPP_TOKEN and WHATSAPP_PHONE_NUMBER_ID are required."}
+    try:
+        payload = {
+            "messaging_product": "whatsapp",
+            "recipient_type": "individual",
+            "to": to,
+            "type": "text",
+            "text": {"preview_url": True, "body": redact_personal_data(body)},
+        }
+        req = Request(
+            f"https://graph.facebook.com/v20.0/{phone_id}/messages",
+            data=json.dumps(payload).encode("utf-8"),
+            headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json", "User-Agent": USER_AGENT},
+            method="POST",
+        )
+        with urlopen(req, timeout=20) as resp:
+            return {"ok": True, "response": json.loads(resp.read(1_000_000).decode("utf-8"))}
+    except Exception as exc:
+        return {"ok": False, "note": f"WhatsApp send failed: {exc}"}
+
+
 def swarm_initial_state() -> Dict[str, Any]:
     return {
         "human": {"role": "final_authority", "level": 99, "immutable": True},
@@ -1630,40 +1702,101 @@ def integration_registry(extra: str = "", include_pg: bool = True) -> List[Dict[
     return base
 
 
-def build_website(query: str, corpus: List[Dict[str, Any]], brand: str = "Scientific RAG", goal: str = "Convert visitors") -> Dict[str, str]:
-    """Generate a simple single-file website from retrieved evidence."""
+def website_brief_features(brief: str) -> Dict[str, Any]:
+    text = (brief or "").lower()
+    urls = re.findall(r"https?://[^\s)>\"]+", brief or "")
+    return {
+        "audio": bool(re.search(r"\b(audio|mp3|voice|podcast|sound|music)\b", text)),
+        "video": bool(re.search(r"\b(video|youtube|reel|short)\b", text)),
+        "contact": bool(re.search(r"\b(contact|form|lead|enquiry|inquiry|whatsapp)\b", text)),
+        "shop": bool(re.search(r"\b(shop|store|payment|buy|checkout|product)\b", text)),
+        "urls": urls,
+    }
 
-    hits = retrieve(corpus, query or brand, 6)
-    evidence = [h["text"][:260] for h in hits]
+
+def build_website(query: str, corpus: List[Dict[str, Any]], brand: str = "Scientific RAG", goal: str = "Convert visitors") -> Dict[str, str]:
+    """Generate a prompt-shaped single-file website with SEO, critique, and tips."""
+
+    hits = retrieve(corpus, query or brand, 8)
+    evidence = [h["text"][:280] for h in hits]
+    features = website_brief_features(query)
     title = escape(brand.strip() or "Scientific RAG")
-    offer = escape(goal.strip() or "Evidence-grounded intelligence")
-    cards = "\n".join(f"<article><p>{escape(t)}</p></article>" for t in evidence[:3]) or "<article><p>Upload source material to ground this section.</p></article>"
+    offer = escape((query or goal).strip()[:180] or "Evidence-grounded intelligence")
+    description = escape(f"{brand}: {goal}. Built from user brief and retrieved evidence."[:155])
+    cards = "\n".join(f"<article><p>{escape(t)}</p></article>" for t in evidence[:3]) or "<article><p>No uploaded evidence was available; review claims before publishing.</p></article>"
+    audio = ""
+    if features["audio"]:
+        src = features["urls"][0] if features["urls"] else ""
+        audio = f"""
+    <section>
+      <h2>Audio</h2>
+      <p>Add your voice note, MP3, podcast, or outreach recording here.</p>
+      <audio controls src="{escape(src)}"></audio>
+    </section>"""
+    contact = """
+    <section>
+      <h2>Contact</h2>
+      <form>
+        <label>Name<input name="name" autocomplete="name"></label>
+        <label>Email<input name="email" type="email" autocomplete="email"></label>
+        <label>Message<textarea name="message" rows="4"></textarea></label>
+        <button type="button">Send</button>
+      </form>
+    </section>""" if features["contact"] else ""
     html = f"""<!doctype html>
 <html lang="en">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="description" content="{description}">
+  <meta property="og:title" content="{title}">
+  <meta property="og:description" content="{description}">
   <title>{title}</title>
   <style>
-    body{{margin:0;font-family:Inter,Arial,sans-serif;color:#17202a;background:#f7f9fb}}
+    body{{margin:0;font-family:Inter,Arial,sans-serif;color:#17202a;background:#f7f9fb;line-height:1.55}}
     header{{padding:64px 8vw;background:#0d1b2a;color:white}}
     h1{{font-size:clamp(36px,6vw,72px);margin:0 0 12px}}
     main{{padding:36px 8vw;display:grid;gap:24px}}
     section{{max-width:1120px}}
     .grid{{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:16px}}
     article{{background:white;border:1px solid #d8dee6;border-radius:8px;padding:18px}}
+    input,textarea{{width:100%;padding:10px;margin:6px 0 12px;border:1px solid #cbd5e1;border-radius:6px}}
+    audio{{width:100%;max-width:720px}}
     a.button{{display:inline-block;margin-top:16px;background:#12b886;color:#06110d;padding:12px 16px;border-radius:6px;text-decoration:none;font-weight:700}}
   </style>
+  <script type="application/ld+json">{{"@context":"https://schema.org","@type":"WebSite","name":"{title}","description":"{description}"}}</script>
 </head>
 <body>
   <header><h1>{title}</h1><p>{offer}</p><a class="button" href="#evidence">Explore Evidence</a></header>
   <main>
     <section id="evidence"><h2>Evidence Highlights</h2><div class="grid">{cards}</div></section>
-    <section><h2>Action</h2><p>Use the uploaded corpus, media assets, and integrations to publish, test, and improve this page.</p></section>
+    <section><h2>What This Page Does</h2><p>{offer}</p></section>
+    {audio}
+    {contact}
+    <section><h2>Action</h2><p>Use the uploaded corpus, media assets, integrations, and human review checklist to publish, test, and improve this page.</p></section>
   </main>
 </body>
 </html>"""
-    return {"html": html, "sources": json.dumps(hits, indent=2)}
+    seo = [
+        "Use a specific page title under 60 characters.",
+        "Keep meta description near 150 characters.",
+        "Add one H1, descriptive H2s, alt text for images, and canonical URL before publishing.",
+        "Use Open Graph tags for WhatsApp, LinkedIn, and social sharing.",
+        "Compress images/audio and test mobile speed.",
+    ]
+    tips = [
+        "Map every public claim to a source or remove it.",
+        "Add analytics only after privacy notice and consent needs are reviewed.",
+        "Use a visible contact/CTA section if the page is for outreach.",
+        "For audio, host MP3 on a permitted URL and paste it in the brief.",
+        "Review DPDP/GDPR/CCPA needs before collecting form data.",
+    ]
+    critique = [
+        "Evidence coverage is limited." if len(hits) < 3 else "Evidence coverage is acceptable for a draft.",
+        "Audio requested but no audio URL was detected." if features["audio"] and not features["urls"] else "Media request is represented where possible.",
+        "Human review is required before publishing.",
+    ]
+    return {"html": html, "sources": json.dumps(hits, indent=2), "seo": seo, "tips": tips, "critique": critique}
 
 
 TEMPLATE_LIBRARY = [

@@ -57,6 +57,8 @@ from multi_agent import (
     update_swarm_feedback,
     upsert_integrations_pg,
     vector_space_knowledge,
+    whatsapp_send_text,
+    whatsapp_toolkit,
 )
 
 
@@ -141,6 +143,9 @@ def secret_env() -> None:
         "PINECONE_NAMESPACE",
         "SUPABASE_URL",
         "SUPABASE_SERVICE_ROLE_KEY",
+        "WHATSAPP_TOKEN",
+        "WHATSAPP_PHONE_NUMBER_ID",
+        "WHATSAPP_BUSINESS_ACCOUNT_ID",
     ):
         if key in st.secrets and not os.getenv(key):
             os.environ[key] = str(st.secrets[key])
@@ -321,6 +326,7 @@ action = st.selectbox(
         "Codex workflow",
         "Template",
         "Voiceover",
+        "WhatsApp automation",
         "Marketing",
         "Media inventory",
         "Integrations",
@@ -448,6 +454,17 @@ elif action == "Study quiz":
 elif action == "Website":
     page = build_website(brief, corpus, "Evidence Studio", "Evidence-grounded publication")
     components.html(page["html"], height=600, scrolling=True)
+    c1, c2 = st.columns(2)
+    with c1:
+        st.markdown("**Critic Review**")
+        st.markdown("\n".join(f"- {x}" for x in page.get("critique", [])))
+        st.markdown("**SEO Suggestions**")
+        st.markdown("\n".join(f"- {x}" for x in page.get("seo", [])))
+    with c2:
+        st.markdown("**Pro Tips**")
+        st.markdown("\n".join(f"- {x}" for x in page.get("tips", [])))
+        with st.expander("Website source evidence"):
+            st.code(page.get("sources", "[]"), language="json")
     show_download("website", page["html"], "index.html", "text/html")
 
 elif action == "App blueprint":
@@ -479,6 +496,19 @@ elif action == "Voiceover":
     if guide.get("url"):
         st.link_button("Open tool", guide["url"])
     show_download("voiceover script", guide["safe_text"], "voiceover_script.txt", "text/plain")
+
+elif action == "WhatsApp automation":
+    service_url = st.text_input("Service / website URL", "")
+    audience = st.text_input("Audience", "opted-in users")
+    out = whatsapp_toolkit(brief, service_url, audience)
+    st.json(out)
+    with st.expander("Optional Cloud API send"):
+        st.warning("Send only to opted-in recipients and only when policy/consent requirements are satisfied.")
+        to = st.text_input("Recipient phone E.164", placeholder="919999999999")
+        send_ok = st.checkbox("Human confirms opt-in, policy compliance, and message review")
+        if to and send_ok and st.button("Send WhatsApp text"):
+            st.json(whatsapp_send_text(to, out["safe_message"] + (f"\n{service_url}" if service_url else "")))
+    show_download("WhatsApp automation", json.dumps(out, indent=2), "whatsapp_automation.json", "application/json")
 
 elif action == "Marketing":
     out = marketing_plan(brief, corpus, integration_registry())
