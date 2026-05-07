@@ -34,7 +34,7 @@ except Exception:  # pragma: no cover
 
 
 EXTS = {".pdf", ".txt", ".md", ".csv", ".tsv", ".xlsx", ".xls", ".json", ".png", ".jpg", ".jpeg", ".webp"}
-PROVIDERS = {"local", "ollama", "openai", "grok", "gemini", "huggingface", "openrouter", "custom"}
+PROVIDERS = {"local", "ollama", "openai", "claude", "grok", "gemini", "huggingface", "openrouter", "custom"}
 DATABASE_URL = "DATABASE_URL"
 USER_AGENT = "ScientificRAG-CompliantFetcher/1.0"
 
@@ -731,6 +731,8 @@ def llm_model_catalog(extra: str = "") -> List[Dict[str, str]]:
         [
             {"label": "PAID | OpenAI | GPT-4o mini", "provider": "openai", "model": "gpt-4o-mini", "base_url": "", "key_env": "OPENAI_API_KEY", "pricing": "paid/key", "requires_key": "yes"},
             {"label": "PAID | OpenAI | GPT-4o", "provider": "openai", "model": "gpt-4o", "base_url": "", "key_env": "OPENAI_API_KEY", "pricing": "paid/key", "requires_key": "yes"},
+            {"label": "PAID | Claude | Claude 3.5 Sonnet", "provider": "claude", "model": "claude-3-5-sonnet-latest", "base_url": "https://api.anthropic.com/v1/messages", "key_env": "ANTHROPIC_API_KEY", "pricing": "paid/key", "requires_key": "yes"},
+            {"label": "PAID | Claude | Claude 3.5 Haiku", "provider": "claude", "model": "claude-3-5-haiku-latest", "base_url": "https://api.anthropic.com/v1/messages", "key_env": "ANTHROPIC_API_KEY", "pricing": "paid/key", "requires_key": "yes"},
             {"label": "PAID | Grok/xAI | grok-2-latest", "provider": "grok", "model": "grok-2-latest", "base_url": "https://api.x.ai/v1", "key_env": "GROK_API_KEY", "pricing": "paid/key", "requires_key": "yes"},
             {"label": "FREE/PAID | Gemini | gemini-1.5-flash", "provider": "gemini", "model": "gemini-1.5-flash", "base_url": "", "key_env": "GOOGLE_API_KEY", "pricing": "free-tier/key", "requires_key": "yes"},
             {"label": "FREE/PAID | Hugging Face | Llama 3.1 8B Instruct", "provider": "huggingface", "model": "meta-llama/Llama-3.1-8B-Instruct", "base_url": "https://router.huggingface.co/v1", "key_env": "HF_TOKEN", "pricing": "free-tier/key", "requires_key": "yes"},
@@ -1001,6 +1003,65 @@ def build_corpus_from_tavily(query: str, max_results: int = 5, topic: str = "gen
 
 def needs_live_search(query: str) -> bool:
     return bool(re.search(r"\b(latest|today|current|recent|live|now|new|updated|2026|price|news|guideline|rule|law|model list|free model)\b", query or "", re.I))
+
+
+AI_POLICY_PROFILES = [
+    {
+        "name": "ChatGPT / OpenAI",
+        "type": "chat_provider",
+        "provider": "openai",
+        "official_urls": [
+            "https://openai.com/policies/",
+            "https://openai.com/policies/usage-policies/",
+            "https://openai.com/policies/privacy-policy/",
+        ],
+        "institution_notes": "Use business/enterprise terms, DPA, privacy, usage policy, and local law for government/institutional deployment.",
+    },
+    {
+        "name": "Claude / Anthropic",
+        "type": "chat_provider",
+        "provider": "claude",
+        "official_urls": [
+            "https://www.anthropic.com/legal/consumer-terms",
+            "https://www.anthropic.com/legal/privacy",
+            "https://www.anthropic.com/legal/aup",
+            "https://support.anthropic.com/en/collections/4078534-privacy-and-legal",
+        ],
+        "institution_notes": "Use commercial terms/API or Claude for Work controls for institutional data; review retention, training, and DPA requirements.",
+    },
+    {
+        "name": "Microsoft Copilot",
+        "type": "policy_profile",
+        "provider": "custom",
+        "official_urls": [
+            "https://www.microsoft.com/en-us/microsoft-copilot/for-individuals/termsofuse",
+            "https://www.microsoft.com/en-us/microsoft-copilot/for-individuals/privacy",
+            "https://learn.microsoft.com/en-us/microsoft-365/copilot/enterprise-data-protection",
+        ],
+        "institution_notes": "Microsoft Copilot consumer and Microsoft 365 Copilot have different terms. For government/institutional use, review Product Terms, DPA, enterprise data protection, tenant controls, and admin policies.",
+    },
+]
+
+
+def ai_policy_profiles() -> List[Dict[str, Any]]:
+    return [dict(x) for x in AI_POLICY_PROFILES]
+
+
+def ai_policy_scan(profile_name: str = "All", jurisdiction: str = "Global/Unknown") -> Dict[str, Any]:
+    profiles = AI_POLICY_PROFILES if profile_name == "All" else [p for p in AI_POLICY_PROFILES if p["name"] == profile_name]
+    rows = []
+    for profile in profiles:
+        fetched = []
+        for url in profile["official_urls"]:
+            item = fetch_url_text(url, jurisdiction)
+            fetched.append({"url": url, "ok": item.get("ok", False), "note": item.get("note", ""), "excerpt": item.get("text", "")[:1500]})
+        rows.append({"profile": profile, "fetched": fetched})
+    return {
+        "generated_at_utc": datetime.now(timezone.utc).isoformat(),
+        "jurisdiction": jurisdiction,
+        "legal_note": "Policy scan is a technical aid, not legal advice. Use official URLs, current contracts, institutional policy, and qualified counsel.",
+        "profiles": rows,
+    }
 
 
 def corpus_id(paths: List[Path]) -> str:
@@ -1326,6 +1387,54 @@ def vector_space_knowledge(corpus: List[Dict[str, Any]], query: str = "entire co
     }
 
 
+def study_quiz_generator(
+    corpus: List[Dict[str, Any]],
+    exam: str,
+    topic: str,
+    count: int = 10,
+    difficulty: str = "medium",
+    mode: str = "question_paper",
+) -> str:
+    """NotebookLM-inspired grounded quiz/question-paper generator."""
+
+    hits = retrieve(corpus, f"{exam} {topic} {difficulty}", min(max(count, 5), 25))
+    evidence = "\n".join(f"- {h['source']} p.{h['page']} [{h['section']}]: {h['text'][:260]}" for h in hits)
+    if not hits:
+        return "# Study Generator\n\nNot found in uploaded documents. Upload syllabus, notes, textbook chapters, or previous papers first."
+    questions = []
+    for i, h in enumerate(hits[:count], start=1):
+        stem = re.sub(r"\s+", " ", h["text"])[:180]
+        cite = f"`{h['source']}` p.{h['page']} [{h['section']}]"
+        if mode == "flashcards":
+            questions.append(f"**Card {i}**\n\nFront: What should a student remember from {cite}?\n\nBack: {stem}\n")
+        elif mode == "quiz":
+            questions.append(
+                f"**Q{i}.** Based on {cite}, which statement is best supported?\n\n"
+                f"A. {stem}\nB. Not found in uploaded documents\nC. Unsupported inference\nD. Outside syllabus claim\n\n"
+                f"**Answer:** A\n**Explanation:** Supported by {cite}.\n"
+            )
+        else:
+            marks = 1 if difficulty == "easy" else 3 if difficulty == "medium" else 5
+            questions.append(
+                f"**Q{i}. ({marks} marks)** Explain the following using only the cited source: {stem}\n\n"
+                f"**Source:** {cite}\n**Expected answer points:** cite the source, preserve terms/numbers, avoid unsupported claims.\n"
+            )
+    return (
+        f"# {exam} {mode.replace('_', ' ').title()}\n\n"
+        f"**Topic:** {topic or 'Uploaded document corpus'}\n\n"
+        f"**Difficulty:** {difficulty}\n\n"
+        f"**Questions:** {len(questions)}\n\n"
+        "## Student Instructions\n\n"
+        "- Answer only from the uploaded source material.\n"
+        "- Cite the provided source reference in your answer.\n"
+        "- If evidence is missing, write: Not found in uploaded documents.\n\n"
+        "## Questions\n\n"
+        + "\n".join(questions)
+        + "\n## Evidence Basis\n\n"
+        + evidence
+    )
+
+
 def embedding_retrieve(corpus: List[Dict[str, Any]], query: str, k: int = 8, model: str = "text-embedding-3-large") -> List[Dict[str, Any]]:
     """Semantic retrieval with OpenAI embeddings, falling back to TF-IDF."""
 
@@ -1352,6 +1461,94 @@ def embedding_retrieve(corpus: List[Dict[str, Any]], query: str, k: int = 8, mod
         return [dict(corpus[int(i)], score=float(scores[int(i)]), embedding_model=model) for i in order]
     except Exception:
         return retrieve(corpus, query, k)
+
+
+def pinecone_ready() -> bool:
+    return bool(os.getenv("PINECONE_API_KEY") and os.getenv("PINECONE_INDEX") and os.getenv("OPENAI_API_KEY"))
+
+
+def pinecone_upsert(corpus: List[Dict[str, Any]], namespace: str = "") -> bool:
+    if not pinecone_ready() or not corpus:
+        return False
+    try:
+        from openai import OpenAI
+        from pinecone import Pinecone
+
+        ns = namespace or os.getenv("PINECONE_NAMESPACE", "default")
+        pc = Pinecone(api_key=os.getenv("PINECONE_API_KEY"))
+        index = pc.Index(os.getenv("PINECONE_INDEX", ""))
+        client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+        texts = [f"{c['source']} {c['section']} {c['kind']} {c['text'][:5000]}" for c in corpus]
+        vecs = client.embeddings.create(model=os.getenv("OPENAI_EMBEDDING_MODEL", "text-embedding-3-large"), input=texts).data
+        payload = []
+        for i, (c, v) in enumerate(zip(corpus, vecs)):
+            payload.append(
+                {
+                    "id": hashlib.sha256(f"{c.get('source')}:{c.get('page')}:{i}".encode()).hexdigest(),
+                    "values": v.embedding,
+                    "metadata": {
+                        "idx": i,
+                        "source": str(c.get("source", "")),
+                        "page": int(c.get("page", 1) or 1),
+                        "section": str(c.get("section", ""))[:200],
+                        "kind": str(c.get("kind", "")),
+                        "text": str(c.get("text", ""))[:3000],
+                    },
+                }
+            )
+        for start in range(0, len(payload), 100):
+            index.upsert(vectors=payload[start:start + 100], namespace=ns)
+        return True
+    except Exception:
+        return False
+
+
+def pinecone_retrieve(corpus: List[Dict[str, Any]], query: str, k: int = 8, namespace: str = "") -> List[Dict[str, Any]]:
+    if not pinecone_ready():
+        return embedding_retrieve(corpus, query, k)
+    try:
+        from openai import OpenAI
+        from pinecone import Pinecone
+
+        ns = namespace or os.getenv("PINECONE_NAMESPACE", "default")
+        client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+        qvec = client.embeddings.create(model=os.getenv("OPENAI_EMBEDDING_MODEL", "text-embedding-3-large"), input=[query]).data[0].embedding
+        pc = Pinecone(api_key=os.getenv("PINECONE_API_KEY"))
+        res = pc.Index(os.getenv("PINECONE_INDEX", "")).query(vector=qvec, top_k=k, include_metadata=True, namespace=ns)
+        out = []
+        for match in res.get("matches", []) if isinstance(res, dict) else getattr(res, "matches", []):
+            md = match.get("metadata", {}) if isinstance(match, dict) else match.metadata
+            score = match.get("score", 0) if isinstance(match, dict) else match.score
+            out.append(
+                {
+                    "source": md.get("source", "pinecone"),
+                    "page": md.get("page", 1),
+                    "section": md.get("section", "Vector"),
+                    "kind": md.get("kind", "vector"),
+                    "text": md.get("text", ""),
+                    "score": float(score or 0),
+                }
+            )
+        return out or embedding_retrieve(corpus, query, k)
+    except Exception:
+        return embedding_retrieve(corpus, query, k)
+
+
+def supabase_ready() -> bool:
+    return bool(os.getenv("SUPABASE_URL") and os.getenv("SUPABASE_SERVICE_ROLE_KEY"))
+
+
+def supabase_log_metadata(metadata: Dict[str, Any]) -> bool:
+    if not supabase_ready():
+        return False
+    try:
+        from supabase import create_client
+
+        client = create_client(os.getenv("SUPABASE_URL", ""), os.getenv("SUPABASE_SERVICE_ROLE_KEY", ""))
+        client.table(os.getenv("SUPABASE_METADATA_TABLE", "rag_metadata")).upsert(metadata).execute()
+        return True
+    except Exception:
+        return False
 
 
 lexical_retrieve = retrieve
@@ -1720,6 +1917,8 @@ def _provider() -> Tuple[str, str, str, str | None]:
         return p, os.getenv("GEMINI_MODEL", "gemini-1.5-flash"), "", os.getenv("GOOGLE_API_KEY")
     if p == "grok":
         return p, os.getenv("GROK_MODEL", "grok-2-latest"), os.getenv("GROK_BASE_URL", "https://api.x.ai/v1"), os.getenv("GROK_API_KEY")
+    if p == "claude":
+        return p, os.getenv("ANTHROPIC_MODEL", "claude-3-5-sonnet-latest"), os.getenv("ANTHROPIC_BASE_URL", "https://api.anthropic.com/v1/messages"), os.getenv("ANTHROPIC_API_KEY")
     if p == "huggingface":
         return p, os.getenv("HF_MODEL", "meta-llama/Llama-3.1-8B-Instruct"), os.getenv("HF_BASE_URL", "https://router.huggingface.co/v1"), os.getenv("HF_TOKEN")
     if p == "openrouter":
@@ -1753,6 +1952,27 @@ def generate(question: str, chunks: List[Dict[str, Any]], external: bool = False
             msg = "\n\n".join(f"{m['role'].upper()}:\n{m['content']}" for m in router_messages(rule, question, context, history))
             out = genai.GenerativeModel(model).generate_content(msg)
             return {"answer": _grounding_guard(getattr(out, "text", "") or "", chunks), "provider": provider, "model": model}
+        except Exception as exc:
+            return {"answer": _local_answer(question, chunks) + f"\n\nProvider failed: {exc}", "provider": "local", "model": "fallback"}
+    if provider == "claude":
+        try:
+            payload = {
+                "model": model,
+                "max_tokens": 1200,
+                "temperature": 0,
+                "system": rule,
+                "messages": [{"role": "user", "content": f"Question:\n{question}\n\nEvidence:\n{context}\n\nFormat: concise answer, evidence bullets with citations, limitations."}],
+            }
+            req = Request(
+                base_url,
+                data=json.dumps(payload).encode("utf-8"),
+                headers={"Content-Type": "application/json", "x-api-key": key or "", "anthropic-version": "2023-06-01", "User-Agent": USER_AGENT},
+                method="POST",
+            )
+            with urlopen(req, timeout=45) as resp:
+                data = json.loads(resp.read(2_000_000).decode("utf-8"))
+            text = "\n".join(part.get("text", "") for part in data.get("content", []) if part.get("type") == "text")
+            return {"answer": _grounding_guard(text, chunks), "provider": provider, "model": model}
         except Exception as exc:
             return {"answer": _local_answer(question, chunks) + f"\n\nProvider failed: {exc}", "provider": "local", "model": "fallback"}
     try:

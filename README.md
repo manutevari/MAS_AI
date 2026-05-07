@@ -38,8 +38,11 @@ A small Streamlit app for evidence-grounded scientific question answering over u
 - Live chat can open without uploaded documents; upload files or enable Tavily for grounded evidence.
 - Explore the indexed vector/lexical evidence space as auditable knowledge, not unsupported memory.
 - Use Tavily live search as an opt-in evidence source when current information is needed.
+- Scan official ChatGPT/OpenAI, Claude/Anthropic, and Microsoft Copilot policy profiles for institutional/government review.
+- Generate NotebookLM-style study guides, quizzes, flashcards, and exam question papers from uploaded sources.
 - Download answers as Markdown, JSON, CSV, HTML, or TXT.
 - Persist indexed chunks and query logs in PostgreSQL.
+- Optionally use Pinecone for vector retrieval and Supabase for metadata/API storage.
 
 ## Run
 
@@ -57,6 +60,7 @@ Embedding retrieval uses `OPENAI_API_KEY` and `text-embedding-3-large`. If no ke
 Optional OpenAI-compatible providers:
 
 - `openai`: `OPENAI_API_KEY`
+- `claude`: `ANTHROPIC_API_KEY`
 - `grok`: `GROK_API_KEY`
 - `huggingface`: `HF_TOKEN`
 - `openrouter`: `OPENROUTER_API_KEY`
@@ -65,10 +69,10 @@ Optional OpenAI-compatible providers:
 
 Set provider keys in Streamlit secrets or environment variables.
 
-For live search, set `TAVILY_API_KEY`. The app uses Tavily only when the sidebar toggle is enabled and the query asks for current/latest/live information, or when the `Live search` action is selected.
+For live search, set `TAVILY_API_KEY` in Streamlit secrets/TOML or environment. The UI does not accept Tavily keys directly; it only shows a live-search toggle and configured/missing status.
 
 The sidebar shows the required key input for the selected model, for example `OPENROUTER_API_KEY`, `OPENAI_API_KEY`, `GOOGLE_API_KEY`, `HF_TOKEN`, or a custom key env var.
-For no-key free/local models, the key input is hidden. Password fields mask keys, and metadata exports never include raw keys; the app only displays a short irreversible fingerprint when a key is set.
+For no-key free/local models, the key input is hidden. Password fields mask keys, and metadata exports never include raw keys. The UI never displays keys, partial keys, or key fingerprints.
 
 The LLM dropdown tries to load OpenRouter's live model catalog and labels entries as free or paid/key-required. If live loading is unavailable, built-in fallback choices remain available. Extra models can be added in this format:
 
@@ -165,6 +169,25 @@ The app creates two small tables automatically:
 - `rag_queries`: questions, answers, provider, model, timestamps
 - `rag_integrations`: editable tool/model registry with optional base URL, model name, key env var, and ranking score
 
+## Pinecone And Supabase
+
+Optional vector/database services:
+
+```toml
+PINECONE_API_KEY = ""
+PINECONE_INDEX = ""
+PINECONE_NAMESPACE = "default"
+
+SUPABASE_URL = ""
+SUPABASE_SERVICE_ROLE_KEY = ""
+SUPABASE_METADATA_TABLE = "rag_metadata"
+```
+
+- Pinecone stores OpenAI `text-embedding-3-large` vectors and can be selected in `Retrieval`.
+- Pinecone falls back to OpenAI embedding retrieval or TF-IDF if not configured.
+- Supabase can be used through `DATABASE_URL` for hosted PostgreSQL.
+- Supabase API metadata logging is optional through `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY`.
+
 ## Files
 
 - `streamlit_app.py`: UI
@@ -179,7 +202,29 @@ The interface is intentionally one-screen:
 - main screen: one `Action` dropdown, one brief/query box, one `Run` button
 - output area: review result, approve, download
 
-Actions include Chat, Agent chat, Ask suggestions, Vector knowledge, Live search, Website, App blueprint, Codex workflow, Template, Voiceover, Marketing, Media inventory, Integrations, Swarm, Toolbox, Compliance, and Metadata.
+Actions include Chat, Agent chat, Ask suggestions, Vector knowledge, Live search, AI policy scan, Study quiz, Website, App blueprint, Codex workflow, Template, Voiceover, Marketing, Media inventory, Integrations, Swarm, Toolbox, Compliance, and Metadata.
+
+## Study Quiz / Question Paper
+
+The `Study quiz` action is inspired by NotebookLM-style source-grounded studying:
+
+- generate exact-style question papers
+- generate quizzes with answer keys
+- generate flashcards
+- choose exam name, topic, difficulty, and number of questions
+- use uploaded documents as the only source of truth
+- include citations to source file/page/section
+- tell students to write “Not found in uploaded documents” when evidence is missing
+
+## ChatGPT / Claude / Microsoft Copilot Policy Profiles
+
+The `AI policy scan` action uses official URLs only:
+
+- OpenAI policies, usage policies, and privacy policy
+- Anthropic consumer/commercial/privacy/usage policy resources
+- Microsoft Copilot terms, privacy, and Microsoft 365 Copilot enterprise data protection resources
+
+The app does not bypass access controls or scrape arbitrary policy databases. It uses compliant URL fetching with robots.txt checks where applicable, source excerpts, jurisdiction notes, and a legal-review warning. Microsoft Copilot is treated as a policy/institution profile unless you connect an authorized enterprise/custom endpoint.
 
 ## Tavily Live Search
 

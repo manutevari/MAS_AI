@@ -13,6 +13,8 @@ import streamlit as st
 import streamlit.components.v1 as components
 
 from multi_agent import (
+    ai_policy_profiles,
+    ai_policy_scan,
     answer_rag_chat,
     answer_with_agent_pipeline_from_corpus,
     ask_suggestions,
@@ -36,10 +38,14 @@ from multi_agent import (
     media_inventory,
     needs_live_search,
     ocr_model_options,
+    pinecone_retrieve,
+    pinecone_upsert,
     render_template,
     retrieve,
     save_corpus_pg,
     speech_to_text_options,
+    study_quiz_generator,
+    supabase_log_metadata,
     swarm_initial_state,
     swarm_mermaid,
     template_options,
@@ -83,11 +89,17 @@ def secret_env() -> None:
         "GOOGLE_API_KEY",
         "HF_TOKEN",
         "OPENROUTER_API_KEY",
+        "ANTHROPIC_API_KEY",
         "CUSTOM_LLM_API_KEY",
         "CUSTOM_LLM_BASE_URL",
         "CUSTOM_LLM_MODEL",
         "DATABASE_URL",
         "TAVILY_API_KEY",
+        "PINECONE_API_KEY",
+        "PINECONE_INDEX",
+        "PINECONE_NAMESPACE",
+        "SUPABASE_URL",
+        "SUPABASE_SERVICE_ROLE_KEY",
     ):
         if key in st.secrets and not os.getenv(key):
             os.environ[key] = str(st.secrets[key])
@@ -165,10 +177,8 @@ with st.sidebar:
     jurisdiction = st.selectbox("Jurisdiction", ["India", "EU/EEA", "California", "UK", "Global/Unknown"])
     os.environ["COMPLIANCE_JURISDICTION"] = jurisdiction
     fetch_ok = st.checkbox("I confirm URL fetching is lawful and robots.txt/site terms permit it")
-    tavily_key = st.text_input("Tavily key", os.getenv("TAVILY_API_KEY", ""), type="password")
-    if tavily_key:
-        os.environ["TAVILY_API_KEY"] = tavily_key
     use_tavily = st.checkbox("Use Tavily live search when needed")
+    st.caption("Tavily: configured" if os.getenv("TAVILY_API_KEY") else "Tavily: add TAVILY_API_KEY in Streamlit secrets")
 
     st.divider()
     extra_models = st.text_area("Extra LLMs", placeholder="Label, provider, model, base_url, key_env")
@@ -186,7 +196,7 @@ with st.sidebar:
         if pasted_key:
             os.environ[key_env] = pasted_key
         if os.getenv(key_env):
-            st.caption(f"{key_env}: {encrypt_secret_label(os.getenv(key_env, ''))}")
+            st.caption(f"{key_env}: key loaded")
     else:
         st.caption("Selected model does not require a key.")
 
@@ -199,7 +209,7 @@ with st.sidebar:
         os.environ["CUSTOM_LLM_API_KEY_ENV"] = custom_key_env
 
     st.divider()
-    retrieval = st.selectbox("Retrieval", ["TF-IDF", "OpenAI text-embedding-3-large"])
+    retrieval = st.selectbox("Retrieval", ["TF-IDF", "OpenAI text-embedding-3-large", "Pinecone"])
     ocr = st.selectbox("OCR", [f"{m['label']} | {m['pricing']}" for m in ocr_model_options()])
     os.environ["OCR_ENGINE"] = ocr_model_options()[[f"{m['label']} | {m['pricing']}" for m in ocr_model_options()].index(ocr)]["engine"]
     os.environ["OCR_LANG"] = st.text_input("OCR language", os.getenv("OCR_LANG", "eng"))
@@ -231,6 +241,9 @@ with st.spinner("Indexing evidence..."):
         save_corpus_pg(corpus, cid)
 
 metadata = corpus_metadata(corpus, cid)
+supabase_log_metadata(metadata)
+if retrieval == "Pinecone" and corpus:
+    st.caption("Pinecone: indexed" if pinecone_upsert(corpus, cid) else "Pinecone: not configured or indexing failed")
 st.success(summary)
 status_cols = st.columns(4)
 status_cols[0].metric("Chunks", len(corpus))
@@ -260,6 +273,8 @@ action = st.selectbox(
         "Ask suggestions",
         "Vector knowledge",
         "Live search",
+        "AI policy scan",
+        "Study quiz",
         "Website",
         "App blueprint",
         "Codex workflow",
@@ -319,7 +334,10 @@ if use_tavily and brief and (action == "Live search" or needs_live_search(brief)
         st.caption(live_summary)
 
 with st.expander("Evidence preview", expanded=False):
-    hits = embedding_retrieve(corpus, brief or "summary", top_k) if corpus and retrieval.startswith("OpenAI") else retrieve(corpus, brief or "summary", top_k)
+    if retrieval == "Pinecone":
+        hits = pinecone_retrieve(corpus, brief or "summary", top_k, cid)
+    else:
+        hits = embedding_retrieve(corpus, brief or "summary", top_k) if corpus and retrieval.startswith("OpenAI") else retrieve(corpus, brief or "summary", top_k)
     st.text(format_context(hits) if hits else "No indexed evidence yet. Enable Tavily live search or upload documents for grounded evidence.")
 
 run = st.button("Run", type="primary")
@@ -336,7 +354,7 @@ if action == "Chat":
                 corpus,
                 provider=provider,
                 top_k=top_k,
-                retrieval_engine="openai_embeddings" if retrieval.startswith("OpenAI") else "tfidf",
+                retrieval_engine="openai_embeddings" if retrieval in {"OpenAI text-embedding-3-large", "Pinecone"} else "tfidf",
             )
         )
     st.markdown(result["answer"])
@@ -368,6 +386,23 @@ elif action == "Live search":
     st.json(out["summary"])
     st.text(format_context(out["top_evidence"], max_chars=14000))
     show_download("live search evidence", json.dumps(out, indent=2), "live_search_evidence.json", "application/json")
+
+elif action == "AI policy scan":
+    profiles = ["All"] + [p["name"] for p in ai_policy_profiles()]
+    profile = st.selectbox("Policy profile", profiles)
+    out = ai_policy_scan(profile, jurisdiction)
+    st.json(out)
+    show_download("AI policy scan", json.dumps(out, indent=2), "ai_policy_scan.json", "application/json")
+
+elif action == "Study quiz":
+    c1, c2, c3 = st.columns(3)
+    exam = c1.text_input("Exam", "School / University Exam")
+    difficulty = c2.selectbox("Difficulty", ["easy", "medium", "hard"])
+    mode = c3.selectbox("Mode", ["question_paper", "quiz", "flashcards"])
+    count = st.slider("Questions", 5, 50, 10)
+    out = study_quiz_generator(corpus, exam, brief or "uploaded syllabus", count, difficulty, mode)
+    st.markdown(out)
+    show_download("study quiz", out, f"{mode}.md", "text/markdown")
 
 elif action == "Website":
     page = build_website(brief, corpus, "Evidence Studio", "Evidence-grounded publication")
