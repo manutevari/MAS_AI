@@ -4,45 +4,27 @@ A small Streamlit app for evidence-grounded scientific question answering over u
 
 ## What It Does
 
-- Upload one or more files: ZIP, PDF, TXT, Markdown, JSON, CSV/TSV, Excel, or images.
-- Ask scientific questions about methods, values, tables, figures, structures, assays, or limitations.
-- Retrieve relevant chunks with TF-IDF and numeric/table boosts.
-- Optionally retrieve semantically with OpenAI `text-embedding-3-large`.
-- Answer from uploaded scientific evidence by default.
-- Refuse unsupported answers instead of hallucinating; every model answer must cite uploaded source evidence.
-- Optionally allow general/open-source knowledge.
-- Optionally show a simple Planner -> Executor -> Verifier conversation.
-- Build a live single-file website from retrieved evidence and download `index.html`.
-- Generate many template types from uploaded evidence.
-- Generate Emergent-style app builder blueprints for web, mobile, SaaS, enterprise, and fintech apps.
-- Generate a marketing plan grounded in uploaded documents.
-- Manage a media inventory for tables, figures, images, diagrams, charts, and assets.
-- Maintain a PostgreSQL-backed integration/model registry for free, paid, new, or underrated apps and services.
-- Use a custom OpenAI-compatible LLM endpoint so newly available model routers can be added without code changes.
-- Choose from segregated LLM dropdowns: `Free / no key` and `Paid / key required`.
-- Key fields appear only for paid/key-required selections.
-- Configure multilingual OCR with `OCR_LANG` for precise text extraction when Tesseract language packs are installed.
-- Select OCR models from a dropdown with free/paid and key-required labels.
-- Select transliteration strategy while keeping answers grounded in uploaded OCR/document evidence.
-- Use speech-to-text as a typing helper for queries.
-- Record query audio with the browser microphone and use the transcript as typed query text.
-- Generate safe voiceover scripts for free and paid text-to-speech models.
-- Include India DPDP-oriented privacy controls: lawful-basis confirmation, cloud-processing gate, and PII redaction.
-- Ingest compliant web URLs with robots.txt checks, jurisdiction selection, redaction, and source citations.
-- Apply international compliance readiness controls for India DPDP, EU/EEA GDPR, UK GDPR, California CCPA/CPRA, and global safe-fetch workflows.
-- Keep human-in-the-loop approvals and metadata/audit exports.
-- Use combined swarm topologies with agent attention weights, feedback-driven promotion/demotion, and immutable human authority above the orchestrator.
-- Show a toolbox readiness matrix for every major feature, dependency, key, and integration target.
-- Suggest grounded questions from the indexed corpus.
-- Show `Try asking` suggestions directly under the query box with mic and upload controls.
-- Live chat can open without uploaded documents; upload files or enable Tavily for grounded evidence.
-- Explore the indexed vector/lexical evidence space as auditable knowledge, not unsupported memory.
-- Use Tavily live search as an opt-in evidence source when current information is needed.
-- Scan official ChatGPT/OpenAI, Claude/Anthropic, and Microsoft Copilot policy profiles for institutional/government review.
-- Generate NotebookLM-style study guides, quizzes, flashcards, and exam question papers from uploaded sources.
-- Download answers as Markdown, JSON, CSV, HTML, or TXT.
-- Persist indexed chunks and query logs in PostgreSQL.
-- Optionally use Pinecone for vector retrieval and Supabase for metadata/API storage.
+Scientific RAG Studio is a compact Streamlit workspace for grounded research, study, and publishing workflows.
+
+Core capabilities:
+
+- evidence-grounded chat over files, permitted URLs, Tavily live evidence, or vector stores
+- TF-IDF, OpenAI embeddings, and optional Pinecone retrieval
+- PDF, text, spreadsheet, image/OCR, ZIP, and web evidence ingestion
+- strict anti-hallucination guardrails with citations and missing-evidence handling
+- NotebookLM-style quizzes, flashcards, and question papers from uploaded sources
+- website, app blueprint, marketing, media, voiceover, and template generation
+- segregated free/no-key and paid/key-required model selectors
+- Ollama, OpenAI, Claude, Grok, Gemini, Hugging Face, OpenRouter, and custom endpoints
+- India DPDP plus international compliance controls
+- human-in-the-loop approvals, metadata exports, and swarm governance
+
+Storage and search:
+
+- PostgreSQL or Supabase Postgres for logs and chunks
+- Supabase API metadata logging
+- Pinecone vector retrieval
+- Tavily opt-in live search from Streamlit secrets only
 
 ## Run
 

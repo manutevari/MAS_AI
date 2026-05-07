@@ -65,17 +65,58 @@ st.set_page_config(page_title="Scientific RAG", layout="wide")
 st.markdown(
     """
 <style>
-    .block-container {padding-top: 1.4rem; max-width: 1280px;}
-    h1 {font-size: 2.2rem; margin-bottom: .2rem;}
-    [data-testid="stSidebar"] {background: #f7f9fb;}
-    div[data-testid="stMetric"] {background: #ffffff; border: 1px solid #e5e7eb; border-radius: 8px; padding: 12px;}
-    .hero {border: 1px solid #e5e7eb; border-radius: 10px; padding: 18px 20px; background: linear-gradient(135deg,#ffffff,#f5fbff);}
-    .chip {display:inline-block; padding:4px 9px; border:1px solid #d8dee6; border-radius:999px; margin:4px 6px 4px 0; background:#fff; font-size:12px;}
-    .danger {border-color:#f1b4b4; background:#fff5f5;}
-    .ok {border-color:#a7e0bd; background:#f1fff6;}
-    .muted {color:#64748b;}
-    div.stButton > button {border-radius: 8px; min-height: 38px;}
-    div.stDownloadButton > button {border-radius: 8px; min-height: 38px; background:#0f766e; color:white;}
+    .block-container {
+        padding-top: 1.4rem;
+        max-width: 1280px;
+    }
+    h1 {
+        font-size: 2.2rem;
+        margin-bottom: .2rem;
+    }
+    [data-testid="stSidebar"] {
+        background: #f7f9fb;
+    }
+    div[data-testid="stMetric"] {
+        background: #ffffff;
+        border: 1px solid #e5e7eb;
+        border-radius: 8px;
+        padding: 12px;
+    }
+    .hero {
+        border: 1px solid #e5e7eb;
+        border-radius: 10px;
+        padding: 18px 20px;
+        background: linear-gradient(135deg, #ffffff, #f5fbff);
+    }
+    .chip {
+        display: inline-block;
+        padding: 4px 9px;
+        border: 1px solid #d8dee6;
+        border-radius: 999px;
+        margin: 4px 6px 4px 0;
+        background: #ffffff;
+        font-size: 12px;
+    }
+    .danger {
+        border-color: #f1b4b4;
+        background: #fff5f5;
+    }
+    .ok {
+        border-color: #a7e0bd;
+        background: #f1fff6;
+    }
+    .muted {
+        color: #64748b;
+    }
+    div.stButton > button,
+    div.stDownloadButton > button {
+        border-radius: 8px;
+        min-height: 38px;
+    }
+    div.stDownloadButton > button {
+        background: #0f766e;
+        color: white;
+    }
 </style>
 """,
     unsafe_allow_html=True,
