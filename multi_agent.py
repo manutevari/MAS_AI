@@ -1073,6 +1073,48 @@ def build_corpus_from_tavily(query: str, max_results: int = 5, topic: str = "gen
     return rows, f"Indexed {len(rows)} Tavily live-search chunks from {len(data.get('results', []))} result(s)."
 
 
+def ingest_latest_updates(
+    query: str,
+    corpus_id_value: str = "latest_updates",
+    max_results: int = 8,
+    jurisdiction: str = "Global/Unknown",
+    urls: Optional[List[str]] = None,
+    store_postgres: bool = True,
+    store_pinecone: bool = True,
+) -> Dict[str, Any]:
+    """Fetch compliant latest updates and persist to configured vector/database stores."""
+
+    rows: List[Dict[str, Any]] = []
+    notes = []
+    if urls:
+        url_rows, url_note = build_corpus_from_urls(urls, jurisdiction)
+        rows.extend(url_rows)
+        notes.append(url_note)
+    tav_rows, tav_note = build_corpus_from_tavily(query, max_results=max_results)
+    rows.extend(tav_rows)
+    notes.append(tav_note)
+    saved_pg = save_corpus_pg(rows, corpus_id_value) if store_postgres and rows else False
+    saved_pc = pinecone_upsert(rows, corpus_id_value) if store_pinecone and rows else False
+    return {
+        "query": query,
+        "corpus_id": corpus_id_value,
+        "jurisdiction": jurisdiction,
+        "policy": jurisdiction_policy(jurisdiction),
+        "notes": notes,
+        "chunks": len(rows),
+        "postgres_saved": saved_pg,
+        "pinecone_saved": saved_pc,
+        "guardrails": [
+            "Use only Tavily snippets and user-provided URLs that pass compliance checks.",
+            "Respect robots.txt, website terms, copyright/database rights, and institutional policies.",
+            "Do not bypass paywalls, logins, CAPTCHAs, or access controls.",
+            "Redact personal identifiers when enabled.",
+            "Treat updates as source evidence requiring human review, not legal advice.",
+        ],
+        "sources": [{"source": r.get("source"), "section": r.get("section"), "kind": r.get("kind")} for r in rows[:20]],
+    }
+
+
 def needs_live_search(query: str) -> bool:
     return bool(re.search(r"\b(latest|today|current|recent|live|now|new|updated|2026|price|news|guideline|rule|law|model list|free model)\b", query or "", re.I))
 
@@ -1459,6 +1501,24 @@ def vector_space_knowledge(corpus: List[Dict[str, Any]], query: str = "entire co
     }
 
 
+def mermaid_mindmap(corpus: List[Dict[str, Any]], query: str = "Study Mindmap", k: int = 12) -> str:
+    hits = retrieve(corpus, query or "mindmap", k)
+    root = re.sub(r"[^A-Za-z0-9 _-]", "", query or "Evidence Mindmap").strip() or "Evidence Mindmap"
+    lines = ["mindmap", f"  root(({root[:60]}))"]
+    by_source: Dict[str, List[Dict[str, Any]]] = {}
+    for h in hits:
+        by_source.setdefault(str(h.get("source", "Source")), []).append(h)
+    for source, rows in list(by_source.items())[:6]:
+        clean_source = re.sub(r"[^A-Za-z0-9 _.-]", "", source)[:50] or "Source"
+        lines.append(f"    {clean_source}")
+        for h in rows[:4]:
+            section = re.sub(r"[^A-Za-z0-9 _.-]", "", str(h.get("section", "Section")))[:44] or "Section"
+            snippet = re.sub(r"[^A-Za-z0-9 _.-]", "", str(h.get("text", ""))[:70]).strip() or "Evidence"
+            lines.append(f"      {section}")
+            lines.append(f"        {snippet}")
+    return "\n".join(lines)
+
+
 def study_quiz_generator(
     corpus: List[Dict[str, Any]],
     exam: str,
@@ -1467,18 +1527,46 @@ def study_quiz_generator(
     difficulty: str = "medium",
     mode: str = "question_paper",
 ) -> str:
-    """NotebookLM-inspired grounded quiz/question-paper generator."""
+    """NotebookLM/PW/textbook-style grounded quiz and question-paper generator."""
 
     hits = retrieve(corpus, f"{exam} {topic} {difficulty}", min(max(count, 5), 25))
     evidence = "\n".join(f"- {h['source']} p.{h['page']} [{h['section']}]: {h['text'][:260]}" for h in hits)
     if not hits:
         return "# Study Generator\n\nNot found in uploaded documents. Upload syllabus, notes, textbook chapters, or previous papers first."
     questions = []
+    weak_topics: Dict[str, int] = {}
     for i, h in enumerate(hits[:count], start=1):
         stem = re.sub(r"\s+", " ", h["text"])[:180]
         cite = f"`{h['source']}` p.{h['page']} [{h['section']}]"
+        weak_topics[h.get("section", "Document")] = weak_topics.get(h.get("section", "Document"), 0) + 1
         if mode == "flashcards":
             questions.append(f"**Card {i}**\n\nFront: What should a student remember from {cite}?\n\nBack: {stem}\n")
+        elif mode == "pw_practice":
+            questions.append(
+                f"**Q{i}. Single Correct MCQ**\n\n"
+                f"Question: Which option is directly supported by {cite}?\n\n"
+                f"A. {stem}\nB. A claim not stated in the uploaded source\nC. A formula/result from outside the document\nD. Cannot be determined from any source\n\n"
+                f"**Correct Answer:** A\n\n"
+                f"**Why:** Option A is copied from the cited evidence. Options B-D are distractors requiring unsupported inference.\n\n"
+                f"**PW-style feedback:** Revise `{h.get('section', 'Document')}` and underline exact words/numbers in the source before answering.\n"
+            )
+        elif mode == "textbook_solution":
+            questions.append(
+                f"**Problem {i}. Textbook-style worked solution**\n\n"
+                f"**Given from source:** {stem}\n\n"
+                f"**Step 1:** Identify the known fact/value/method from {cite}.\n\n"
+                f"**Step 2:** Restate the concept without adding outside assumptions.\n\n"
+                f"**Step 3:** Final answer must cite {cite}.\n\n"
+                f"**Common mistake:** Do not use a formula, value, or theorem unless it appears in uploaded evidence.\n"
+            )
+        elif mode == "assertion_reason":
+            questions.append(
+                f"**Q{i}. Assertion-Reason**\n\n"
+                f"Assertion (A): {stem}\n\n"
+                f"Reason (R): This is supported by {cite}.\n\n"
+                "Choose: (1) A and R true, R explains A (2) A and R true, R does not explain A (3) A true, R false (4) A false.\n\n"
+                "**Answer:** 1, if the student cites the source exactly.\n"
+            )
         elif mode == "quiz":
             questions.append(
                 f"**Q{i}.** Based on {cite}, which statement is best supported?\n\n"
@@ -1496,12 +1584,23 @@ def study_quiz_generator(
         f"**Topic:** {topic or 'Uploaded document corpus'}\n\n"
         f"**Difficulty:** {difficulty}\n\n"
         f"**Questions:** {len(questions)}\n\n"
+        "## Exam-Prep Style\n\n"
+        "- Physics Wallah-style: fast MCQ practice, feedback, weak-topic revision.\n"
+        "- Textbook-style: step-by-step source-backed explanations.\n"
+        "- NotebookLM-style: generated from uploaded material only.\n\n"
         "## Student Instructions\n\n"
         "- Answer only from the uploaded source material.\n"
         "- Cite the provided source reference in your answer.\n"
         "- If evidence is missing, write: Not found in uploaded documents.\n\n"
         "## Questions\n\n"
         + "\n".join(questions)
+        + "\n## Weak Topic Signals\n\n"
+        + "\n".join(f"- {k}: {v} generated item(s)" for k, v in sorted(weak_topics.items(), key=lambda x: x[1], reverse=True))
+        + "\n\n## Teacher / Student Pro Tips\n\n"
+        "- Convert wrong answers into flashcards.\n"
+        "- Reattempt weak sections after 24 hours and 7 days.\n"
+        "- For numericals, write given, required, formula/source, substitution, final unit.\n"
+        "- For theory, answer in points and cite exact document section.\n"
         + "\n## Evidence Basis\n\n"
         + evidence
     )

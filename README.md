@@ -12,10 +12,11 @@ Core capabilities:
 - TF-IDF, OpenAI embeddings, and optional Pinecone retrieval
 - PDF, text, spreadsheet, image/OCR, ZIP, and web evidence ingestion
 - strict anti-hallucination guardrails with citations and missing-evidence handling
-- NotebookLM-style quizzes, flashcards, and question papers from uploaded sources
+- NotebookLM-style, Physics Wallah-style, and textbook-style quizzes, flashcards, solutions, and question papers from uploaded sources
 - website, app blueprint, marketing, media, voiceover, and template generation
 - WhatsApp Business automation drafts, payloads, policy checklist, and optional Cloud API send
 - prompt-aware website builder with critic review, SEO suggestions, pro tips, media/audio sections, and source evidence
+- Mermaid-style mindmap generation from retrieved evidence
 - segregated free/no-key and paid/key-required model selectors
 - Ollama, OpenAI, Claude, Grok, Gemini, Hugging Face, OpenRouter, and custom endpoints
 - India DPDP plus international compliance controls
@@ -27,6 +28,7 @@ Storage and search:
 - Supabase API metadata logging
 - Pinecone vector retrieval
 - Tavily opt-in live search from Streamlit secrets only
+- compliant latest-update ingestion into PostgreSQL and Pinecone when configured
 
 ## Run
 
@@ -186,18 +188,31 @@ The interface is intentionally one-screen:
 - main screen: one `Action` dropdown, one brief/query box, one `Run` button
 - output area: review result, approve, download
 
-Actions include Chat, Agent chat, Ask suggestions, Vector knowledge, Live search, AI policy scan, Study quiz, Website, App blueprint, Codex workflow, Template, Voiceover, Marketing, Media inventory, Integrations, Swarm, Toolbox, Compliance, and Metadata.
+Actions include Chat, Agent chat, Ask suggestions, Vector knowledge, Live search, AI policy scan, Study quiz, Website, App blueprint, Codex workflow, Template, Voiceover, Marketing, Media inventory, Mindmap, Integrations, Swarm, Toolbox, Compliance, and Metadata.
+
+## Mermaid Mindmap
+
+The `Mindmap` action generates Mermaid `mindmap` syntax from retrieved evidence:
+
+- groups topics by source
+- nests sections and evidence snippets
+- previews the Mermaid block in Streamlit
+- exports `mindmap.mmd`
 
 ## Study Quiz / Question Paper
 
-The `Study quiz` action is inspired by NotebookLM-style source-grounded studying:
+The `Study quiz` action is inspired by NotebookLM-style source-grounded studying, Physics Wallah-style practice, and textbook-style worked solutions:
 
 - generate exact-style question papers
+- generate Physics Wallah-style MCQ practice with feedback
+- generate textbook-style step-by-step source-backed solutions
+- generate assertion-reason questions
 - generate quizzes with answer keys
 - generate flashcards
 - choose exam name, topic, difficulty, and number of questions
 - use uploaded documents as the only source of truth
 - include citations to source file/page/section
+- include weak-topic signals and revision tips
 - tell students to write “Not found in uploaded documents” when evidence is missing
 
 ## ChatGPT / Claude / Microsoft Copilot Policy Profiles
@@ -221,6 +236,17 @@ Tavily is integrated as a controlled evidence source:
 - live search is opt-in from the sidebar
 - current-information queries such as latest, current, today, news, rule, guideline, or free model list can trigger it when enabled
 - grounded-answer guardrails still apply
+
+## Latest Update Ingestion
+
+The `Ingest latest updates` action updates your evidence store without unrestricted scraping:
+
+- Uses Tavily snippets when `TAVILY_API_KEY` is configured.
+- Optionally includes user-provided permitted URLs that pass the compliance fetcher.
+- Stores update chunks in PostgreSQL when `DATABASE_URL` is configured.
+- Stores vector embeddings in Pinecone when `PINECONE_API_KEY`, `PINECONE_INDEX`, and `OPENAI_API_KEY` are configured.
+- Includes jurisdiction policy notes for India, EU/EEA, UK, California, or Global/Unknown.
+- Keeps guardrails for robots.txt, site terms, copyright/database rights, institutional policies, privacy, and human review.
 
 ## WhatsApp Automation
 

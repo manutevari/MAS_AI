@@ -31,11 +31,13 @@ from multi_agent import (
     encrypt_secret_label,
     format_context,
     integration_registry,
+    ingest_latest_updates,
     llm_model_catalog,
     load_integrations_pg,
     log_query_pg,
     marketing_plan,
     media_inventory,
+    mermaid_mindmap,
     needs_live_search,
     ocr_model_options,
     pinecone_retrieve,
@@ -319,6 +321,7 @@ action = st.selectbox(
         "Ask suggestions",
         "Vector knowledge",
         "Live search",
+        "Ingest latest updates",
         "AI policy scan",
         "Study quiz",
         "Website",
@@ -329,6 +332,7 @@ action = st.selectbox(
         "WhatsApp automation",
         "Marketing",
         "Media inventory",
+        "Mindmap",
         "Integrations",
         "Swarm",
         "Toolbox",
@@ -434,6 +438,25 @@ elif action == "Live search":
     st.text(format_context(out["top_evidence"], max_chars=14000))
     show_download("live search evidence", json.dumps(out, indent=2), "live_search_evidence.json", "application/json")
 
+elif action == "Ingest latest updates":
+    st.warning("This uses Tavily live search only when configured. It stores snippets, not unrestricted scraped pages.")
+    namespace = st.text_input("Update corpus / namespace", "latest_updates")
+    max_results = st.slider("Live results", 3, 10, 8)
+    save_pg = st.checkbox("Store in PostgreSQL", value=True)
+    save_pc = st.checkbox("Store in Pinecone", value=True)
+    permitted_urls = [u.strip() for u in urls.splitlines() if u.strip()] if fetch_ok else []
+    out = ingest_latest_updates(
+        brief or "latest updates",
+        corpus_id_value=namespace,
+        max_results=max_results,
+        jurisdiction=jurisdiction,
+        urls=permitted_urls,
+        store_postgres=save_pg,
+        store_pinecone=save_pc,
+    )
+    st.json(out)
+    show_download("latest updates", json.dumps(out, indent=2), "latest_updates_ingest.json", "application/json")
+
 elif action == "AI policy scan":
     profiles = ["All"] + [p["name"] for p in ai_policy_profiles()]
     profile = st.selectbox("Policy profile", profiles)
@@ -445,7 +468,7 @@ elif action == "Study quiz":
     c1, c2, c3 = st.columns(3)
     exam = c1.text_input("Exam", "School / University Exam")
     difficulty = c2.selectbox("Difficulty", ["easy", "medium", "hard"])
-    mode = c3.selectbox("Mode", ["question_paper", "quiz", "flashcards"])
+    mode = c3.selectbox("Mode", ["question_paper", "pw_practice", "textbook_solution", "assertion_reason", "quiz", "flashcards"])
     count = st.slider("Questions", 5, 50, 10)
     out = study_quiz_generator(corpus, exam, brief or "uploaded syllabus", count, difficulty, mode)
     st.markdown(out)
@@ -519,6 +542,12 @@ elif action == "Media inventory":
     out = media_inventory(corpus)
     st.dataframe(out, use_container_width=True)
     show_download("media inventory", json.dumps(out, indent=2), "media_inventory.json", "application/json")
+
+elif action == "Mindmap":
+    out = mermaid_mindmap(corpus, brief or "Evidence Mindmap")
+    st.markdown(f"```mermaid\n{out}\n```")
+    st.code(out, language="mermaid")
+    show_download("mindmap", out, "mindmap.mmd", "text/plain")
 
 elif action == "Integrations":
     custom = st.text_area("Add integrations", placeholder="Tool, category, pricing, use, base_url, model, key_env, score")
