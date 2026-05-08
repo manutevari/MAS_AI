@@ -13,6 +13,7 @@ Core capabilities:
 - PDF, text, spreadsheet, image/OCR, ZIP, and web evidence ingestion
 - strict anti-hallucination guardrails with citations and missing-evidence handling
 - NotebookLM-style, Physics Wallah-style, and textbook-style quizzes, flashcards, solutions, and question papers from uploaded sources
+- school clerk automation for result sheets, attendance, fee reminders, certificates, roll lists, notices, and parent communication drafts
 - website, app blueprint, marketing, media, voiceover, and template generation
 - WhatsApp Business automation drafts, payloads, policy checklist, and optional Cloud API send
 - prompt-aware website builder with critic review, SEO suggestions, pro tips, media/audio sections, and source evidence
@@ -21,6 +22,8 @@ Core capabilities:
 - Ollama, OpenAI, Claude, Grok, Gemini, Hugging Face, OpenRouter, and custom endpoints
 - India DPDP plus international compliance controls
 - human-in-the-loop approvals, metadata exports, and swarm governance
+- orchestration manager that routes mic/text/doc/URL queries to the right agent and tool workflow
+- mic transcription can auto-route through the orchestration manager to execute the required task
 
 Storage and search:
 
@@ -188,7 +191,26 @@ The interface is intentionally one-screen:
 - main screen: one `Action` dropdown, one brief/query box, one `Run` button
 - output area: review result, approve, download
 
-Actions include Chat, Agent chat, Ask suggestions, Vector knowledge, Live search, AI policy scan, Study quiz, Website, App blueprint, Codex workflow, Template, Voiceover, Marketing, Media inventory, Mindmap, Visual maps, Integrations, Swarm, Toolbox, Compliance, and Metadata.
+Actions include Orchestration manager, Chat, Agent chat, Ask suggestions, Vector knowledge, Live search, AI policy scan, School clerk, Study quiz, Website, App blueprint, Codex workflow, Template, Voiceover, Marketing, Media inventory, Mindmap, Visual maps, Integrations, Swarm, Toolbox, Compliance, and Metadata.
+
+## Orchestration Manager
+
+The `Orchestration manager` action is the default router for normal use:
+
+- accepts text, mic transcription, uploaded documents, ZIP/PDF/image/spreadsheet evidence, and permitted URL/live evidence
+- selects the smallest useful workflow such as Chat, Agent chat, School clerk, Study quiz, Website, Visual maps, Marketing, WhatsApp automation, Compliance, or Live search
+- shows the selected agents, tools, evidence state, confidence, and rationale before executing
+- keeps human review above the orchestrator and all agents
+
+## School Clerk Automation
+
+The `School clerk` action supports school-office workflows:
+
+- result sheet / marksheet generation from uploaded CSV/XLSX mark tables
+- pass/fail, total, percentage, grade, and downloadable CSV result sheet
+- attendance, fee reminder, admission register, transfer certificate, bonafide certificate, and parent notice templates
+- pro tips for clean school data entry and safer parent communication
+- human approval checklist before export, publication, or messaging
 
 ## Visual Maps
 

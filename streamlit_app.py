@@ -41,11 +41,13 @@ from multi_agent import (
     mermaid_mindmap,
     needs_live_search,
     ocr_model_options,
+    orchestration_manager_plan,
     pinecone_retrieve,
     pinecone_upsert,
     render_template,
     retrieve,
     save_corpus_pg,
+    school_clerk_automation,
     speech_to_text_options,
     study_quiz_items,
     study_quiz_generator,
@@ -383,6 +385,7 @@ with st.sidebar:
     os.environ["TRANSLITERATION_ENGINE"] = transliteration_options()[[m["label"] for m in transliteration_options()].index(trans)]["engine"]
     stt = st.selectbox("Speech to text", [m["label"] for m in speech_to_text_options()])
     os.environ["STT_ENGINE"] = speech_to_text_options()[[m["label"] for m in speech_to_text_options()].index(stt)]["engine"]
+    auto_mic_run = st.checkbox("Auto-run mic through orchestration manager", value=True)
 
     st.divider()
     lawful = st.checkbox("Lawful basis/consent for personal data")
@@ -431,9 +434,13 @@ st.markdown(
 if "brief_text" not in st.session_state:
     st.session_state["brief_text"] = ""
 
+if st.session_state.get("pending_action_choice"):
+    st.session_state["action_choice"] = st.session_state.pop("pending_action_choice")
+
 action = st.selectbox(
     "Action",
     [
+        "Orchestration manager",
         "Chat",
         "Agent chat",
         "Ask suggestions",
@@ -441,6 +448,7 @@ action = st.selectbox(
         "Live search",
         "Ingest latest updates",
         "AI policy scan",
+        "School clerk",
         "Study quiz",
         "Website",
         "App blueprint",
@@ -458,6 +466,7 @@ action = st.selectbox(
         "Compliance",
         "Metadata",
     ],
+    key="action_choice",
 )
 if st.session_state.get("pending_brief_text"):
     st.session_state["brief_text"] = st.session_state.pop("pending_brief_text")
@@ -493,6 +502,9 @@ with st.container(border=True):
         name = getattr(speech, "name", "mic_input.wav")
         transcript = transcribe_audio(speech.getvalue(), name, os.getenv("STT_ENGINE", "manual"), os.getenv("OCR_LANG", "eng").split("+")[0])
         st.session_state["pending_brief_text"] = transcript
+        if auto_mic_run:
+            st.session_state["pending_action_choice"] = "Orchestration manager"
+            st.session_state["pending_auto_run"] = True
         st.rerun()
 
 if use_tavily and brief and (action == "Live search" or needs_live_search(brief)):
@@ -511,9 +523,37 @@ with st.expander("Evidence preview", expanded=False):
     st.text(format_context(hits) if hits else "No indexed evidence yet. Enable Tavily live search or upload documents for grounded evidence.")
 
 quiz_active = action == "Study quiz" and bool(st.session_state.get("live_exam"))
-run = st.button("Run", type="primary")
+auto_run = bool(st.session_state.pop("pending_auto_run", False))
+run = st.button("Run", type="primary") or auto_run
+if auto_run:
+    st.success("Mic transcript auto-routed through the orchestration manager.")
 if not run and not quiz_active:
     st.stop()
+
+manager_plan: Dict[str, Any] | None = None
+if action == "Orchestration manager":
+    manager_plan = orchestration_manager_plan(
+        brief,
+        corpus,
+        provider=provider,
+        retrieval_engine=retrieval,
+        live_search_enabled=use_tavily,
+        jurisdiction=jurisdiction,
+    )
+    st.markdown("### Orchestration Manager")
+    c1, c2, c3 = st.columns(3)
+    c1.metric("Selected workflow", manager_plan["selected_action"])
+    c2.metric("Confidence", f"{int(manager_plan['confidence'] * 100)}%")
+    c3.metric("LLM/provider", provider)
+    st.info(manager_plan["rationale"])
+    with st.expander("Selected agents and tools", expanded=True):
+        st.markdown("**Agents**")
+        st.dataframe(manager_plan["agents"], use_container_width=True)
+        st.markdown("**Tools**")
+        st.dataframe(manager_plan["tools"], use_container_width=True)
+        st.json(manager_plan["evidence_state"])
+    action = manager_plan["selected_action"]
+    st.caption(f"Executing selected workflow: {action}")
 
 if action == "Chat":
     if not corpus and not use_tavily:
@@ -583,6 +623,26 @@ elif action == "AI policy scan":
     out = ai_policy_scan(profile, jurisdiction)
     st.json(out)
     show_download("AI policy scan", json.dumps(out, indent=2), "ai_policy_scan.json", "application/json")
+
+elif action == "School clerk":
+    out = school_clerk_automation(brief, corpus)
+    st.markdown(out["markdown"])
+    c1, c2, c3 = st.columns(3)
+    c1.metric("Task", out["task"].replace("_", " ").title())
+    c2.metric("Table records", out["records_detected"])
+    c3.metric("Human review", "Required")
+    if out.get("rows"):
+        st.markdown("### Result Preview")
+        st.dataframe(out["rows"], use_container_width=True)
+    with st.expander("Pro tips", expanded=True):
+        st.markdown("\n".join(f"- {tip}" for tip in out.get("pro_tips", [])))
+    with st.expander("Human approval checklist", expanded=True):
+        st.markdown("\n".join(f"- {item}" for item in out.get("human_checklist", [])))
+    with st.expander("Available clerk automations"):
+        st.markdown("\n".join(f"- {item}" for item in out.get("automation_catalog", [])))
+    if out.get("csv"):
+        show_download("school result csv", out["csv"], "school_result_sheet.csv", "text/csv")
+    show_download("school clerk packet", json.dumps(out, indent=2), "school_clerk_automation.json", "application/json")
 
 elif action == "Study quiz":
     c1, c2, c3 = st.columns(3)

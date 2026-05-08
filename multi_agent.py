@@ -398,6 +398,7 @@ SWARM_AGENTS = [
     {"name": "planner", "role": "planner", "weight": 1.0, "level": 1, "status": "active"},
     {"name": "retriever", "role": "executor", "weight": 1.0, "level": 1, "status": "active"},
     {"name": "verifier", "role": "verifier", "weight": 1.2, "level": 2, "status": "active"},
+    {"name": "school_clerk", "role": "office_automation", "weight": 1.1, "level": 1, "status": "active"},
     {"name": "compliance_guard", "role": "guard", "weight": 1.4, "level": 2, "status": "active"},
     {"name": "orchestrator", "role": "orchestrator", "weight": 1.6, "level": 3, "status": "active"},
 ]
@@ -446,6 +447,7 @@ def toolbox_catalog() -> List[Dict[str, str]]:
         ("Text to speech", "free/paid", "none required", "", "safe script + external/free/local model registry"),
         ("Website builder", "free/local", "streamlit", "", "HTML preview and download"),
         ("Templates", "free/local", "streamlit", "", "HTML/Markdown/JSON/CSV template generation"),
+        ("School clerk automation", "free/local", "pandas", "", "result sheets, attendance, notices, certificates, roll lists"),
         ("Marketing", "free/local", "streamlit", "", "evidence-grounded campaign planning"),
         ("Media management", "free/local", "pandas/Pillow", "", "image/table/figure inventory"),
         ("Compliant web ingestion", "free/local", "stdlib", "", "robots.txt, URL confirmation, redaction, size limits"),
@@ -1502,6 +1504,96 @@ def vector_space_knowledge(corpus: List[Dict[str, Any]], query: str = "entire co
     }
 
 
+def orchestration_manager_plan(
+    query: str,
+    corpus: List[Dict[str, Any]],
+    provider: str = "local",
+    retrieval_engine: str = "TF-IDF",
+    live_search_enabled: bool = False,
+    jurisdiction: str = "India",
+) -> Dict[str, Any]:
+    """Route a user query to the smallest useful agent/tool chain."""
+
+    q = (query or "").lower()
+    has_docs = bool(corpus)
+    has_web = any(str(c.get("kind", "")).startswith("web") or str(c.get("kind", "")) == "live_web" for c in corpus)
+    has_media = any(str(c.get("kind", "")) in {"image", "ocr", "media"} for c in corpus)
+    selected_action = "Agent chat"
+    confidence = 0.62
+    rationale = "General evidence-grounded request; use planner, retriever, executor, verifier."
+
+    rules = [
+        ("School clerk", ["school clerk", "clerk", "result", "marksheet", "mark sheet", "report card", "attendance", "fee reminder", "bonafide", "transfer certificate", "tc", "admission register", "roll list"], "School-office automation intent detected; use clerk workflow with result generation and human review."),
+        ("Study quiz", ["quiz", "exam", "question paper", "mcq", "flashcard", "physics wallah", "textbook", "student"], "Study/exam intent detected; generate grounded learning items."),
+        ("Visual maps", ["mindmap", "mind map", "flowchart", "flow chart", "concept map", "visual", "diagram", "graphic"], "Visual explanation requested; create evidence maps and Mermaid/SVG outputs."),
+        ("Website", ["website", "landing page", "seo", "web page", "site builder", "html"], "Website-building intent detected; use website builder, critic, SEO, and evidence."),
+        ("App blueprint", ["create app", "build app", "app as per prompt", "application blueprint", "emergent"], "App-generation intent detected; produce an implementation blueprint."),
+        ("WhatsApp automation", ["whatsapp", "wa automation", "broadcast", "message campaign"], "WhatsApp/service outreach intent detected; draft compliant automation assets."),
+        ("Voiceover", ["voiceover", "audio", "tts", "speech", "mp3", "narration"], "Audio-generation or narration intent detected; prepare safe voiceover guidance."),
+        ("Marketing", ["marketing", "campaign", "promotion", "ad copy", "social media", "lead"], "Marketing intent detected; prepare grounded campaign plan."),
+        ("Media inventory", ["media inventory", "image inventory", "asset", "gallery"], "Media-management intent detected; inspect uploaded media and metadata."),
+        ("AI policy scan", ["policy", "chatgpt", "claude", "copilot", "terms", "legal norms"], "AI policy/compliance scan requested."),
+        ("Compliance", ["dpdp", "privacy", "compliance", "lawful", "consent", "guideline", "government rule"], "Compliance/legal guardrail intent detected."),
+        ("Ingest latest updates", ["ingest latest", "store latest", "update vector", "latest update into"], "Latest-update ingestion intent detected."),
+        ("Live search", ["latest", "current", "today", "live search", "recent", "new update"], "Fresh information requested; use live search when the toggle and key are configured."),
+        ("Vector knowledge", ["vector space", "knowledge graph", "all evidence", "scrap vector", "scrape vector"], "Vector-space exploration requested."),
+        ("Ask suggestions", ["suggest question", "try asking", "what can i ask"], "Suggestion intent detected."),
+        ("Swarm", ["swarm", "orchestrator", "agent promotion", "agent demotion", "topology"], "Agent governance/topology intent detected."),
+    ]
+    for action, keywords, why in rules:
+        if any(k in q for k in keywords):
+            selected_action = action
+            rationale = why
+            confidence = 0.88
+            break
+
+    if selected_action == "Live search" and not live_search_enabled:
+        selected_action = "Agent chat" if has_docs else "Chat"
+        rationale += " Live search is disabled, so the manager falls back to grounded chat."
+        confidence = 0.72
+    if selected_action in {"Agent chat", "Chat"} and not has_docs and live_search_enabled and needs_live_search(query):
+        selected_action = "Live search"
+        confidence = 0.8
+
+    agents = [
+        {"agent": "human_supervisor", "role": "approval, policy, final authority", "rank": 0},
+        {"agent": "orchestration_manager", "role": "classify intent and select tools", "rank": 1},
+        {"agent": "planner", "role": "break query into tool steps", "rank": 2},
+        {"agent": "retriever", "role": "retrieve uploaded/web/vector evidence", "rank": 3},
+        {"agent": "school_clerk", "role": "school office/result workflow when selected", "rank": 4},
+        {"agent": "executor", "role": f"run {selected_action}", "rank": 5},
+        {"agent": "verifier", "role": "check grounding, citations, and missing evidence", "rank": 6},
+        {"agent": "compliance_guard", "role": f"apply {jurisdiction} privacy/legal controls", "rank": 7},
+    ]
+    tools = [
+        {"tool": "mic_or_text_query", "selected": bool(query), "why": "User query enters through text or transcribed mic."},
+        {"tool": "document_ingestion", "selected": has_docs, "why": "Uploaded files/ZIP/PDF/images/spreadsheets form the evidence base."},
+        {"tool": "url_ingestion", "selected": has_web, "why": "Permitted URLs/live snippets are present in the corpus."},
+        {"tool": "retrieval", "selected": has_docs or has_web, "why": f"Using {retrieval_engine} to ground the response."},
+        {"tool": "llm_provider", "selected": provider != "local", "why": f"Selected provider: {provider}."},
+        {"tool": selected_action, "selected": True, "why": rationale},
+        {"tool": "human_review", "selected": True, "why": "Human remains above every agent and approves exports/actions."},
+    ]
+    return {
+        "selected_action": selected_action,
+        "confidence": confidence,
+        "rationale": rationale,
+        "query_channel": "mic/text",
+        "evidence_state": {
+            "chunks": len(corpus),
+            "has_documents": has_docs,
+            "has_url_or_live_evidence": has_web,
+            "has_media_or_ocr": has_media,
+            "live_search_enabled": live_search_enabled,
+        },
+        "agents": agents,
+        "tools": tools,
+        "provider": provider,
+        "retrieval_engine": retrieval_engine,
+        "jurisdiction": jurisdiction,
+    }
+
+
 def mermaid_mindmap(corpus: List[Dict[str, Any]], query: str = "Study Mindmap", k: int = 12) -> str:
     hits = retrieve(corpus, query or "mindmap", k)
     root = re.sub(r"[^A-Za-z0-9 _-]", "", query or "Evidence Mindmap").strip() or "Evidence Mindmap"
@@ -2242,6 +2334,208 @@ def emergent_app_blueprint(idea: str, corpus: List[Dict[str, Any]], app_type: st
         "- Metadata and source citations are present.\n"
         "- Final output is reviewed by a responsible human.\n"
     )
+
+
+def _cell_float(value: Any) -> Optional[float]:
+    text = str(value or "").strip().replace(",", "")
+    text = re.sub(r"[%₹$]", "", text)
+    if not re.search(r"\d", text):
+        return None
+    try:
+        return float(text)
+    except Exception:
+        return None
+
+
+def _table_records_from_corpus(corpus: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    records: List[Dict[str, Any]] = []
+    for chunk in corpus:
+        if chunk.get("kind") != "table":
+            continue
+        header: List[str] = []
+        sheet = "Sheet1"
+        for raw_line in str(chunk.get("text", "")).splitlines():
+            line = raw_line.strip()
+            if line.lower().startswith("sheet:"):
+                sheet = line.split(":", 1)[-1].strip() or sheet
+                header = []
+                continue
+            if not (line.startswith("|") and line.endswith("|")):
+                continue
+            cells = [c.strip() for c in line.strip("|").split("|")]
+            if not cells or all(re.fullmatch(r":?-{2,}:?", c.replace(" ", "")) for c in cells):
+                continue
+            if not header:
+                header = cells
+                continue
+            if len(cells) == len(header):
+                row = {header[i] or f"Column {i + 1}": cells[i] for i in range(len(header))}
+                row["_source"] = chunk.get("source", "")
+                row["_page"] = chunk.get("page", 1)
+                row["_sheet"] = sheet
+                records.append(row)
+    return records
+
+
+def _find_column(columns: List[str], options: List[str]) -> Optional[str]:
+    lowered = {c.lower().replace("_", " ").strip(): c for c in columns}
+    for opt in options:
+        for key, original in lowered.items():
+            if opt in key:
+                return original
+    return None
+
+
+def _grade(percent: float) -> str:
+    if percent >= 90:
+        return "A+"
+    if percent >= 75:
+        return "A"
+    if percent >= 60:
+        return "B"
+    if percent >= 45:
+        return "C"
+    if percent >= 33:
+        return "D"
+    return "E"
+
+
+def school_clerk_automation(query: str, corpus: List[Dict[str, Any]]) -> Dict[str, Any]:
+    """School-office automations with human approval and DPDP-minded outputs."""
+
+    q = (query or "").lower()
+    records = _table_records_from_corpus(corpus)
+    task = "result_generation" if any(x in q for x in ["result", "marksheet", "mark sheet", "report card", "grade"]) else "school_office_packet"
+    automation_catalog = [
+        "result sheet / marksheet generation",
+        "student roll list and class register",
+        "attendance summary",
+        "fee reminder draft",
+        "parent WhatsApp/SMS notice draft",
+        "transfer certificate draft checklist",
+        "bonafide / character certificate draft",
+        "exam seating and invigilation checklist",
+        "admission inquiry register",
+        "document verification checklist",
+    ]
+    pro_tips = [
+        "Keep one student per row and one subject per column for automatic result generation.",
+        "Use columns such as Roll No, Student Name, Class, Section, Hindi, English, Maths, Science, SST.",
+        "Review totals, pass/fail, spelling, roll numbers, and personal data before export.",
+        "Do not send student personal data to cloud LLMs unless lawful basis/consent and school policy allow it.",
+        "For WhatsApp notices, send only to opted-in parents/guardians and keep messages minimal.",
+    ]
+    human_checklist = [
+        "Human clerk/teacher verifies uploaded data source.",
+        "Human confirms lawful basis and school authorization.",
+        "Human reviews marks, totals, grades, and pass/fail before publishing.",
+        "Human approves exports/downloads and parent communications.",
+        "Sensitive personal data is redacted/minimized when not required.",
+    ]
+
+    if task == "result_generation" and records:
+        columns = [c for c in records[0].keys() if not c.startswith("_")]
+        name_col = _find_column(columns, ["student name", "name", "candidate"])
+        roll_col = _find_column(columns, ["roll", "admission", "adm no", "enrol", "id"])
+        class_col = _find_column(columns, ["class", "grade", "standard"])
+        section_col = _find_column(columns, ["section", "sec"])
+        excluded = {"total", "percentage", "percent", "grade", "result", "rank", "mobile", "phone", "aadhaar", "aadhar", "email", "age", "roll", "id", "admission", "class", "section"}
+        subject_cols = []
+        for col in columns:
+            key = col.lower()
+            if any(word in key for word in excluded):
+                continue
+            nums = [_cell_float(r.get(col)) for r in records]
+            valid = [n for n in nums if n is not None and 0 <= n <= 100]
+            if valid and len(valid) >= max(1, len(records) // 3):
+                subject_cols.append(col)
+
+        result_rows: List[Dict[str, Any]] = []
+        max_per_subject = 100
+        pass_mark = 33
+        for row in records:
+            marks = [_cell_float(row.get(col)) for col in subject_cols]
+            clean_marks = [m for m in marks if m is not None]
+            if not clean_marks:
+                continue
+            total = round(sum(clean_marks), 2)
+            max_total = max_per_subject * len(subject_cols)
+            percent = round((total / max_total) * 100, 2) if max_total else 0
+            passed = all(m >= pass_mark for m in clean_marks)
+            out = {
+                "Roll No": row.get(roll_col, "") if roll_col else "",
+                "Student Name": row.get(name_col, "") if name_col else row.get(columns[0], ""),
+                "Class": row.get(class_col, "") if class_col else "",
+                "Section": row.get(section_col, "") if section_col else "",
+            }
+            for col in subject_cols:
+                out[col] = row.get(col, "")
+            out.update({"Total": total, "Max Marks": max_total, "Percentage": percent, "Grade": _grade(percent), "Result": "PASS" if passed else "FAIL"})
+            result_rows.append(out)
+
+        csv_lines: List[str] = []
+        if result_rows:
+            headers = list(result_rows[0].keys())
+            csv_lines.append(",".join(headers))
+            for row in result_rows:
+                csv_lines.append(",".join('"' + str(row.get(h, "")).replace('"', '""') + '"' for h in headers))
+        pass_count = sum(1 for r in result_rows if r.get("Result") == "PASS")
+        fail_count = sum(1 for r in result_rows if r.get("Result") == "FAIL")
+        markdown = (
+            "# School Result Generation\n\n"
+            f"**Students processed:** {len(result_rows)}\n\n"
+            f"**Subjects detected:** {', '.join(subject_cols) or 'None'}\n\n"
+            f"**Pass:** {pass_count} | **Fail:** {fail_count}\n\n"
+            "## Preview\n\n"
+            + "\n".join(
+                f"- {r.get('Roll No', '')} {r.get('Student Name', '')}: {r.get('Total')}/{r.get('Max Marks')} ({r.get('Percentage')}%) {r.get('Grade')} {r.get('Result')}"
+                for r in result_rows[:25]
+            )
+            + "\n\n## Human Approval Required\n\n"
+            + "\n".join(f"- {x}" for x in human_checklist)
+        )
+        return {
+            "task": task,
+            "markdown": markdown,
+            "csv": "\n".join(csv_lines),
+            "rows": result_rows,
+            "records_detected": len(records),
+            "pro_tips": pro_tips,
+            "human_checklist": human_checklist,
+            "automation_catalog": automation_catalog,
+            "note": "Result generation is computed locally from uploaded table evidence. Review before publication.",
+        }
+
+    templates = {
+        "Attendance Summary": "Date, Class, Section, Total Students, Present, Absent, Leave, Remarks",
+        "Fee Reminder": "Student Name, Class, Section, Due Amount, Due Date, Parent Contact, Message Status",
+        "Parent Notice": "Audience, Notice Title, Date, Message, Approved By, Dispatch Channel",
+        "Transfer Certificate Checklist": "Student Name, Admission No, Class, Dues Clear, Library Clear, Principal Approval, TC Number",
+        "Admission Register": "Admission No, Student Name, DOB, Class, Guardian, Contact, Address, Documents Verified",
+    }
+    md = (
+        "# School Clerk Automation Packet\n\n"
+        f"**Request:** {query or 'School office automation'}\n\n"
+        "## Available Automations\n\n"
+        + "\n".join(f"- {x}" for x in automation_catalog)
+        + "\n\n## Clerk Templates\n\n"
+        + "\n".join(f"### {name}\n`{cols}`\n" for name, cols in templates.items())
+        + "\n## Pro Tips\n\n"
+        + "\n".join(f"- {x}" for x in pro_tips)
+        + "\n\n## Human In The Loop\n\n"
+        + "\n".join(f"- {x}" for x in human_checklist)
+    )
+    return {
+        "task": task,
+        "markdown": md,
+        "csv": "",
+        "rows": [],
+        "records_detected": len(records),
+        "pro_tips": pro_tips,
+        "human_checklist": human_checklist,
+        "automation_catalog": automation_catalog,
+        "note": "Upload a CSV/XLSX marks table and ask for result generation to compute results.",
+    }
 
 
 def render_template(name: str, query: str, corpus: List[Dict[str, Any]], brand: str = "Evidence Studio") -> Dict[str, str]:
