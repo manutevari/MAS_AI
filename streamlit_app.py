@@ -6,6 +6,7 @@ import asyncio
 import json
 import os
 import tempfile
+from html import escape
 from pathlib import Path
 from typing import Any, Dict, List
 
@@ -60,6 +61,7 @@ from multi_agent import (
     update_swarm_feedback,
     upsert_integrations_pg,
     vector_space_knowledge,
+    visual_map_pack,
     whatsapp_send_text,
     whatsapp_toolkit,
 )
@@ -174,6 +176,19 @@ def show_download(label: str, content: str | bytes, name: str, mime: str) -> Non
         st.download_button("Download", data, name, mime)
     else:
         st.caption("Download locked until human approval.")
+
+
+def render_mermaid(code: str, height: int = 560) -> None:
+    html = f"""
+<div class="mermaid">
+{escape(code)}
+</div>
+<script type="module">
+import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.esm.min.mjs";
+mermaid.initialize({{ startOnLoad: true, theme: "base" }});
+</script>
+"""
+    components.html(html, height=height, scrolling=True)
 
 
 def apply_provider(choice: Dict[str, str]) -> str:
@@ -436,6 +451,7 @@ action = st.selectbox(
         "Marketing",
         "Media inventory",
         "Mindmap",
+        "Visual maps",
         "Integrations",
         "Swarm",
         "Toolbox",
@@ -659,10 +675,36 @@ elif action == "Media inventory":
     show_download("media inventory", json.dumps(out, indent=2), "media_inventory.json", "application/json")
 
 elif action == "Mindmap":
-    out = mermaid_mindmap(corpus, brief or "Evidence Mindmap")
-    st.markdown(f"```mermaid\n{out}\n```")
-    st.code(out, language="mermaid")
-    show_download("mindmap", out, "mindmap.mmd", "text/plain")
+    out = visual_map_pack(corpus, brief or "Evidence Mindmap", "NotebookLM mindmap", top_k)
+    st.caption(out["note"])
+    tabs = st.tabs(["Graphic", "Mermaid", "Evidence"])
+    with tabs[0]:
+        components.html(out["svg"], height=680, scrolling=True)
+        show_download("mindmap svg", out["svg"], "mindmap.svg", "image/svg+xml")
+    with tabs[1]:
+        render_mermaid(out["mermaid"])
+        st.code(out["mermaid"], language="mermaid")
+        show_download("mindmap mermaid", out["mermaid"], "mindmap.mmd", "text/plain")
+    with tabs[2]:
+        st.dataframe(out["outline"], use_container_width=True)
+        show_download("mindmap evidence", json.dumps(out, indent=2), "mindmap.json", "application/json")
+
+elif action == "Visual maps":
+    style = st.selectbox("Visual type", ["NotebookLM mindmap", "Flowchart", "Concept map"])
+    depth = st.slider("Visual evidence depth", 5, 20, top_k)
+    out = visual_map_pack(corpus, brief or "Evidence Visual Map", style, depth)
+    st.caption(out["note"])
+    tabs = st.tabs(["Graphic image", "Mermaid visual", "Evidence outline"])
+    with tabs[0]:
+        components.html(out["svg"], height=720, scrolling=True)
+        show_download("visual svg", out["svg"], f"{style.lower().replace(' ', '_')}.svg", "image/svg+xml")
+    with tabs[1]:
+        render_mermaid(out["mermaid"], height=620)
+        st.code(out["mermaid"], language="mermaid")
+        show_download("visual mermaid", out["mermaid"], f"{style.lower().replace(' ', '_')}.mmd", "text/plain")
+    with tabs[2]:
+        st.dataframe(out["outline"], use_container_width=True)
+        show_download("visual map json", json.dumps(out, indent=2), "visual_map.json", "application/json")
 
 elif action == "Integrations":
     custom = st.text_area("Add integrations", placeholder="Tool, category, pricing, use, base_url, model, key_env, score")

@@ -16,7 +16,7 @@ Core capabilities:
 - website, app blueprint, marketing, media, voiceover, and template generation
 - WhatsApp Business automation drafts, payloads, policy checklist, and optional Cloud API send
 - prompt-aware website builder with critic review, SEO suggestions, pro tips, media/audio sections, and source evidence
-- Mermaid-style mindmap generation from retrieved evidence
+- Mermaid-style mindmap, flowchart, concept-map, and SVG graphic generation from retrieved evidence
 - segregated free/no-key and paid/key-required model selectors
 - Ollama, OpenAI, Claude, Grok, Gemini, Hugging Face, OpenRouter, and custom endpoints
 - India DPDP plus international compliance controls
@@ -188,16 +188,18 @@ The interface is intentionally one-screen:
 - main screen: one `Action` dropdown, one brief/query box, one `Run` button
 - output area: review result, approve, download
 
-Actions include Chat, Agent chat, Ask suggestions, Vector knowledge, Live search, AI policy scan, Study quiz, Website, App blueprint, Codex workflow, Template, Voiceover, Marketing, Media inventory, Mindmap, Integrations, Swarm, Toolbox, Compliance, and Metadata.
+Actions include Chat, Agent chat, Ask suggestions, Vector knowledge, Live search, AI policy scan, Study quiz, Website, App blueprint, Codex workflow, Template, Voiceover, Marketing, Media inventory, Mindmap, Visual maps, Integrations, Swarm, Toolbox, Compliance, and Metadata.
 
-## Mermaid Mindmap
+## Visual Maps
 
-The `Mindmap` action generates Mermaid `mindmap` syntax from retrieved evidence:
+The `Mindmap` and `Visual maps` actions generate NotebookLM/Google-LM-style study visuals from retrieved evidence:
 
 - groups topics by source
 - nests sections and evidence snippets
-- previews the Mermaid block in Streamlit
-- exports `mindmap.mmd`
+- creates mindmaps, flowcharts, and concept maps
+- previews rendered Mermaid where supported
+- renders a downloadable SVG graphic image
+- exports `.mmd`, `.svg`, and JSON evidence outlines
 
 ## Study Quiz / Question Paper
 

@@ -14,6 +14,7 @@ import os
 import re
 import hashlib
 import base64
+import textwrap
 import zipfile
 from datetime import datetime, timezone
 from dataclasses import dataclass, asdict
@@ -1517,6 +1518,133 @@ def mermaid_mindmap(corpus: List[Dict[str, Any]], query: str = "Study Mindmap", 
             lines.append(f"      {section}")
             lines.append(f"        {snippet}")
     return "\n".join(lines)
+
+
+def _diagram_label(value: Any, limit: int = 72) -> str:
+    text = re.sub(r"\s+", " ", str(value or "")).strip()
+    text = re.sub(r"[\[\]{}<>|`]", " ", text).replace('"', "'")
+    return (text[: limit - 3] + "...") if len(text) > limit else text
+
+
+def mermaid_flowchart(corpus: List[Dict[str, Any]], query: str = "Evidence Flowchart", k: int = 10) -> str:
+    hits = retrieve(corpus, query or "flowchart", k)
+    if not hits:
+        return 'flowchart TD\n  A["No uploaded evidence"]'
+    lines = ["flowchart TD", f'  Q["{_diagram_label(query or "Question", 60)}"]']
+    for i, h in enumerate(hits[:k], start=1):
+        source = _diagram_label(h.get("source", "Source"), 48)
+        section = _diagram_label(h.get("section", "Section"), 48)
+        snippet = _diagram_label(h.get("text", "Evidence"), 70)
+        lines.extend(
+            [
+                f'  S{i}["{source}"]',
+                f'  C{i}["{section}"]',
+                f'  E{i}["{snippet}"]',
+                f"  Q --> S{i}",
+                f"  S{i} --> C{i}",
+                f"  C{i} --> E{i}",
+            ]
+        )
+    return "\n".join(lines)
+
+
+def mermaid_concept_map(corpus: List[Dict[str, Any]], query: str = "Concept Map", k: int = 12) -> str:
+    hits = retrieve(corpus, query or "concept map", k)
+    if not hits:
+        return 'graph LR\n  A["No uploaded evidence"]'
+    lines = ["graph LR", f'  Q(("{_diagram_label(query or "Central question", 54)}"))']
+    sections: Dict[str, List[Dict[str, Any]]] = {}
+    for h in hits:
+        sections.setdefault(str(h.get("section", "Document")), []).append(h)
+    for i, (section, rows) in enumerate(list(sections.items())[:7], start=1):
+        lines.append(f'  T{i}["{_diagram_label(section, 46)}"]')
+        lines.append(f"  Q --- T{i}")
+        for j, h in enumerate(rows[:3], start=1):
+            node = f"N{i}_{j}"
+            cite = f"{h.get('source', 'source')} p.{h.get('page', 1)}"
+            label = _diagram_label(f"{h.get('text', '')} ({cite})", 74)
+            lines.append(f'  {node}["{label}"]')
+            lines.append(f"  T{i} --- {node}")
+    return "\n".join(lines)
+
+
+def evidence_graph_svg(corpus: List[Dict[str, Any]], query: str = "Evidence Graphic", k: int = 10) -> str:
+    hits = retrieve(corpus, query or "evidence graphic", k)
+    if not hits:
+        return (
+            '<svg xmlns="http://www.w3.org/2000/svg" width="900" height="260" viewBox="0 0 900 260">'
+            '<rect width="900" height="260" fill="#f8fafc"/>'
+            '<text x="450" y="130" text-anchor="middle" font-family="Arial" font-size="22" fill="#334155">'
+            "No uploaded evidence available</text></svg>"
+        )
+
+    width = 1100
+    row_h = 94
+    height = max(440, 170 + row_h * min(len(hits), k))
+    palette = ["#0f766e", "#2563eb", "#a16207", "#be123c", "#7c3aed", "#047857"]
+    parts = [
+        f'<svg xmlns="http://www.w3.org/2000/svg" width="{width}" height="{height}" viewBox="0 0 {width} {height}">',
+        '<rect width="100%" height="100%" rx="18" fill="#f8fafc"/>',
+        '<rect x="360" y="24" width="380" height="72" rx="14" fill="#111827"/>',
+        f'<text x="550" y="55" text-anchor="middle" font-family="Arial" font-size="18" font-weight="700" fill="#ffffff">{escape(_diagram_label(query or "Evidence Map", 54))}</text>',
+        '<text x="550" y="78" text-anchor="middle" font-family="Arial" font-size="12" fill="#cbd5e1">Grounded visual map from uploaded/permitted evidence</text>',
+    ]
+
+    for i, h in enumerate(hits[:k], start=1):
+        y = 128 + (i - 1) * row_h
+        color = palette[(i - 1) % len(palette)]
+        source = _diagram_label(f"{h.get('source', 'source')} p.{h.get('page', 1)}", 42)
+        section = _diagram_label(h.get("section", "Section"), 44)
+        snippet = _diagram_label(h.get("text", "Evidence"), 120)
+        parts.extend(
+            [
+                f'<line x1="550" y1="96" x2="550" y2="{y + 32}" stroke="#cbd5e1" stroke-width="2"/>',
+                f'<line x1="550" y1="{y + 32}" x2="214" y2="{y + 32}" stroke="#cbd5e1" stroke-width="2"/>',
+                f'<circle cx="214" cy="{y + 32}" r="14" fill="{color}"/>',
+                f'<text x="214" y="{y + 37}" text-anchor="middle" font-family="Arial" font-size="12" font-weight="700" fill="#ffffff">{i}</text>',
+                f'<rect x="242" y="{y}" width="760" height="68" rx="12" fill="#ffffff" stroke="#e2e8f0"/>',
+                f'<rect x="242" y="{y}" width="7" height="68" rx="4" fill="{color}"/>',
+                f'<text x="268" y="{y + 24}" font-family="Arial" font-size="14" font-weight="700" fill="#0f172a">{escape(section)}</text>',
+                f'<text x="760" y="{y + 24}" text-anchor="end" font-family="Arial" font-size="12" fill="#64748b">{escape(source)}</text>',
+            ]
+        )
+        for line_i, wrapped in enumerate(textwrap.wrap(snippet, width=104)[:2]):
+            parts.append(
+                f'<text x="268" y="{y + 46 + (line_i * 16)}" font-family="Arial" font-size="12" fill="#334155">{escape(wrapped)}</text>'
+            )
+    parts.append("</svg>")
+    return "\n".join(parts)
+
+
+def visual_map_pack(
+    corpus: List[Dict[str, Any]],
+    query: str = "Evidence Visual Map",
+    style: str = "NotebookLM mindmap",
+    k: int = 12,
+) -> Dict[str, Any]:
+    if style == "Flowchart":
+        mermaid = mermaid_flowchart(corpus, query, k)
+    elif style == "Concept map":
+        mermaid = mermaid_concept_map(corpus, query, k)
+    else:
+        mermaid = mermaid_mindmap(corpus, query, k)
+    hits = retrieve(corpus, query or "visual map", k)
+    outline = [
+        {
+            "source": h.get("source"),
+            "page": h.get("page"),
+            "section": h.get("section"),
+            "evidence": _diagram_label(h.get("text", ""), 180),
+        }
+        for h in hits
+    ]
+    return {
+        "style": style,
+        "mermaid": mermaid,
+        "svg": evidence_graph_svg(corpus, query, k),
+        "outline": outline,
+        "note": "NotebookLM/Google-LM-style map is generated only from retrieved uploaded or permitted evidence.",
+    }
 
 
 def study_quiz_generator(
