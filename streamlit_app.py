@@ -46,6 +46,7 @@ from multi_agent import (
     retrieve,
     save_corpus_pg,
     speech_to_text_options,
+    study_quiz_items,
     study_quiz_generator,
     supabase_log_metadata,
     swarm_initial_state,
@@ -199,6 +200,108 @@ def apply_provider(choice: Dict[str, str]) -> str:
         os.environ["GROK_MODEL"] = choice["model"]
     os.environ["LLM_PROVIDER"] = provider
     return provider
+
+
+def render_live_exam() -> None:
+    exam_state = st.session_state.get("live_exam")
+    if not exam_state:
+        return
+
+    items = exam_state.get("items", [])
+    if not items:
+        st.warning(exam_state.get("message", "No quiz items were generated."))
+        return
+
+    submitted = exam_state.setdefault("submitted", {})
+    total_points = sum(int(item.get("points", 0)) for item in items)
+    earned_points = sum(int(row.get("points", 0)) for row in submitted.values())
+    answered = len(submitted)
+
+    st.markdown("### Live Exam")
+    st.caption("Options are vertical. Answers reveal only after you submit a selected answer.")
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("Answered", f"{answered}/{len(items)}")
+    c2.metric("Score", f"{earned_points}/{total_points}")
+    c3.metric("Accuracy", f"{round((earned_points / total_points) * 100) if total_points else 0}%")
+    c4.metric("Difficulty", exam_state.get("difficulty", "medium"))
+    st.progress(answered / len(items))
+
+    reset_col, finish_col = st.columns([1, 2])
+    if reset_col.button("Reset live exam"):
+        st.session_state.pop("live_exam", None)
+        st.rerun()
+    if finish_col.button("End exam and show score card"):
+        exam_state["finished"] = True
+
+    for idx, item in enumerate(items):
+        qid = item.get("id", str(idx))
+        saved = submitted.get(qid)
+        with st.container(border=True):
+            st.markdown(f"**Q{idx + 1}. {item['question']}**")
+            st.caption(f"{item.get('points', 0)} point(s) | Source: {item.get('source')} p.{item.get('page')} [{item.get('section')}]")
+            if saved:
+                selected_index = int(saved["selected_index"])
+                st.radio("Options", item["options"], index=selected_index, key=f"locked_{qid}", disabled=True)
+            else:
+                selected = st.radio("Options", item["options"], index=None, key=f"choice_{qid}")
+                if st.button("Submit answer", key=f"submit_{qid}"):
+                    if selected is None:
+                        st.warning("Select an answer first.")
+                    else:
+                        selected_index = item["options"].index(selected)
+                        correct = selected_index == int(item["correct_index"])
+                        submitted[qid] = {
+                            "selected_index": selected_index,
+                            "correct": correct,
+                            "points": int(item.get("points", 0)) if correct else 0,
+                        }
+                        st.rerun()
+
+            if saved:
+                if saved.get("correct"):
+                    st.success(f"Correct. +{item.get('points', 0)} point(s).")
+                else:
+                    st.error("Incorrect. +0 points.")
+                selected_index = int(saved["selected_index"])
+                remarks = item.get("option_feedback", [])
+                if remarks and selected_index < len(remarks):
+                    verdict = "correct" if saved.get("correct") else "incorrect"
+                    st.info(f"Your answer is {verdict} because: {remarks[selected_index]}")
+                st.markdown(f"**Correct answer:** {item['options'][int(item['correct_index'])]}")
+                st.caption("Reason for correct answer: " + item.get("explanation", "The answer is grounded in the cited source."))
+                if remarks:
+                    st.markdown("**Remarks / definitions for all options**")
+                    for option_i, option in enumerate(item["options"]):
+                        prefix = "Correct option" if option_i == int(item["correct_index"]) else "Other option"
+                        st.markdown(f"- **{prefix}:** {option} — {remarks[option_i]}")
+
+    all_done = len(submitted) == len(items)
+    if all_done or exam_state.get("finished"):
+        rows = []
+        for idx, item in enumerate(items, start=1):
+            saved = submitted.get(item.get("id", ""))
+            selected_index = int(saved["selected_index"]) if saved else -1
+            remarks = item.get("option_feedback", [])
+            rows.append(
+                {
+                    "Q": idx,
+                    "Selected": item["options"][selected_index] if saved else "Not answered",
+                    "Correct": item["options"][int(item["correct_index"])],
+                    "Result": "Correct" if saved and saved.get("correct") else "Wrong / skipped",
+                    "Points": saved.get("points", 0) if saved else 0,
+                    "Remark": remarks[selected_index] if saved and remarks and selected_index < len(remarks) else "No answer selected.",
+                    "Correct Reason": item.get("explanation", "Grounded in the cited source."),
+                    "Source": f"{item.get('source')} p.{item.get('page')} [{item.get('section')}]",
+                }
+            )
+        st.markdown("### Score Card")
+        st.success(f"Final score: {earned_points}/{total_points} ({round((earned_points / total_points) * 100) if total_points else 0}%).")
+        st.dataframe(rows, use_container_width=True)
+        weak_topics = exam_state.get("weak_topics", {})
+        if weak_topics:
+            st.markdown("**Weak-topic revision map**")
+            st.markdown("\n".join(f"- {topic}: {count} item(s)" for topic, count in sorted(weak_topics.items(), key=lambda x: x[1], reverse=True)))
+        show_download("score card", json.dumps({"score": earned_points, "total": total_points, "rows": rows}, indent=2), "score_card.json", "application/json")
 
 
 secret_env()
@@ -391,8 +494,9 @@ with st.expander("Evidence preview", expanded=False):
         hits = embedding_retrieve(corpus, brief or "summary", top_k) if corpus and retrieval.startswith("OpenAI") else retrieve(corpus, brief or "summary", top_k)
     st.text(format_context(hits) if hits else "No indexed evidence yet. Enable Tavily live search or upload documents for grounded evidence.")
 
+quiz_active = action == "Study quiz" and bool(st.session_state.get("live_exam"))
 run = st.button("Run", type="primary")
-if not run:
+if not run and not quiz_active:
     st.stop()
 
 if action == "Chat":
@@ -470,9 +574,20 @@ elif action == "Study quiz":
     difficulty = c2.selectbox("Difficulty", ["easy", "medium", "hard"])
     mode = c3.selectbox("Mode", ["question_paper", "pw_practice", "textbook_solution", "assertion_reason", "quiz", "flashcards"])
     count = st.slider("Questions", 5, 50, 10)
-    out = study_quiz_generator(corpus, exam, brief or "uploaded syllabus", count, difficulty, mode)
-    st.markdown(out)
-    show_download("study quiz", out, f"{mode}.md", "text/markdown")
+    live_mode = st.toggle("Live exam with scoring", value=mode in {"quiz", "pw_practice", "assertion_reason"})
+    if run and live_mode:
+        quiz = study_quiz_items(corpus, exam, brief or "uploaded syllabus", count, difficulty, mode)
+        quiz["submitted"] = {}
+        quiz["finished"] = False
+        st.session_state["live_exam"] = quiz
+    elif run:
+        st.session_state.pop("live_exam", None)
+        out = study_quiz_generator(corpus, exam, brief or "uploaded syllabus", count, difficulty, mode)
+        st.markdown(out)
+        show_download("study quiz", out, f"{mode}.md", "text/markdown")
+
+    if live_mode and st.session_state.get("live_exam"):
+        render_live_exam()
 
 elif action == "Website":
     page = build_website(brief, corpus, "Evidence Studio", "Evidence-grounded publication")

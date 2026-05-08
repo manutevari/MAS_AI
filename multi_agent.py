@@ -1606,6 +1606,110 @@ def study_quiz_generator(
     )
 
 
+def study_quiz_items(
+    corpus: List[Dict[str, Any]],
+    exam: str,
+    topic: str,
+    count: int = 10,
+    difficulty: str = "medium",
+    mode: str = "quiz",
+) -> Dict[str, Any]:
+    """Return structured MCQ items for the Streamlit live-exam UI."""
+
+    hits = retrieve(corpus, f"{exam} {topic} {difficulty}", min(max(count, 5), 25))
+    if not hits:
+        return {
+            "title": f"{exam} Live Exam",
+            "items": [],
+            "weak_topics": {},
+            "message": "Not found in uploaded documents. Upload syllabus, notes, textbook chapters, or previous papers first.",
+        }
+
+    points = 1 if difficulty == "easy" else 2 if difficulty == "medium" else 4
+    weak_topics: Dict[str, int] = {}
+    items: List[Dict[str, Any]] = []
+
+    for i, h in enumerate(hits[:count], start=1):
+        source = str(h.get("source", "uploaded source"))
+        page = h.get("page", 1)
+        section = str(h.get("section", "Document"))
+        cite = f"{source} p.{page} [{section}]"
+        stem = re.sub(r"\s+", " ", str(h.get("text", ""))).strip()
+        stem = stem[:260] if stem else "The cited source contains the supported statement."
+        weak_topics[section] = weak_topics.get(section, 0) + 1
+
+        if mode == "assertion_reason":
+            question = f"Assertion-Reason from {cite}: Assertion (A): {stem}"
+            options = [
+                "A and R are true, and R explains A.",
+                "A and R are true, but R does not explain A.",
+                "A is true, but R is false.",
+                "A is false according to the uploaded evidence.",
+            ]
+            correct = options[0]
+            explanation = f"The assertion is copied from the cited evidence, and the reason is its explicit source: {cite}."
+            feedback_map = {
+                options[0]: "Correct: the assertion is grounded in the cited text, and the reason identifies the supporting source.",
+                options[1]: "Incorrect here: the reason is not separate from the evidence; it directly explains why the assertion is accepted.",
+                options[2]: "Incorrect here: the reason is the cited uploaded source, so it is not false.",
+                options[3]: "Incorrect here: the assertion is taken from uploaded evidence, so it should not be marked false.",
+            }
+        else:
+            question = f"Based only on {cite}, which statement is directly supported?"
+            options = [
+                stem,
+                "Not found in uploaded documents.",
+                "An outside-syllabus claim that needs external evidence.",
+                "A conclusion that cannot be verified from the cited source.",
+            ]
+            correct = options[0]
+            explanation = f"The correct option is supported by the uploaded evidence at {cite}."
+            feedback_map = {
+                options[0]: f"Correct: this statement is grounded directly in {cite}.",
+                options[1]: "Incorrect here: the uploaded documents do contain the cited evidence for the correct option.",
+                options[2]: "Incorrect: this option requires external evidence and is outside the uploaded source boundary.",
+                options[3]: "Incorrect: this is a distractor because the cited source verifies the correct option.",
+            }
+
+        seed = hashlib.sha256(f"{exam}|{topic}|{source}|{page}|{section}|{i}".encode("utf-8")).hexdigest()
+        order = sorted(range(len(options)), key=lambda idx: hashlib.sha256(f"{seed}|{idx}".encode("utf-8")).hexdigest())
+        shuffled = [options[idx] for idx in order]
+        correct_index = shuffled.index(correct)
+        option_feedback = [feedback_map.get(option, "Review this option against the cited uploaded evidence.") for option in shuffled]
+
+        items.append(
+            {
+                "id": hashlib.sha256(f"{seed}|item".encode("utf-8")).hexdigest()[:16],
+                "number": i,
+                "question": question,
+                "options": shuffled,
+                "correct_index": correct_index,
+                "points": points,
+                "explanation": explanation,
+                "option_feedback": option_feedback,
+                "source": source,
+                "page": page,
+                "section": section,
+                "difficulty": difficulty,
+                "mode": mode,
+            }
+        )
+
+    return {
+        "title": f"{exam} {mode.replace('_', ' ').title()} Live Exam",
+        "topic": topic or "Uploaded document corpus",
+        "difficulty": difficulty,
+        "items": items,
+        "weak_topics": weak_topics,
+        "instructions": [
+            "Choose one option per question.",
+            "Answers reveal only after submission.",
+            "Points are awarded only for correct choices.",
+            "Every correct answer is grounded in uploaded or permitted evidence.",
+        ],
+    }
+
+
 def embedding_retrieve(corpus: List[Dict[str, Any]], query: str, k: int = 8, model: str = "text-embedding-3-large") -> List[Dict[str, Any]]:
     """Semantic retrieval with OpenAI embeddings, falling back to TF-IDF."""
 

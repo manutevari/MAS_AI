@@ -208,6 +208,8 @@ The `Study quiz` action is inspired by NotebookLM-style source-grounded studying
 - generate textbook-style step-by-step source-backed solutions
 - generate assertion-reason questions
 - generate quizzes with answer keys
+- run a live exam with vertical options, answer reveal after submission, points, and a final score card
+- show a remark for the selected answer and option-wise definitions/notes after submission
 - generate flashcards
 - choose exam name, topic, difficulty, and number of questions
 - use uploaded documents as the only source of truth
