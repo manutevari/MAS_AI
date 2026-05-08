@@ -212,11 +212,44 @@ OCR_MODELS = [
     },
 ]
 
+OCR_LANGUAGE_OPTIONS = [
+    {"label": "Auto common India: English + Hindi + Urdu", "code": "eng+hin+urd", "script": "Latin/Devanagari/Arabic"},
+    {"label": "English", "code": "eng", "script": "Latin"},
+    {"label": "Hindi", "code": "hin", "script": "Devanagari"},
+    {"label": "Urdu", "code": "urd", "script": "Arabic/Nastaliq"},
+    {"label": "Arabic", "code": "ara", "script": "Arabic"},
+    {"label": "Sanskrit", "code": "san", "script": "Devanagari"},
+    {"label": "Bengali", "code": "ben", "script": "Bengali"},
+    {"label": "Tamil", "code": "tam", "script": "Tamil"},
+    {"label": "Telugu", "code": "tel", "script": "Telugu"},
+    {"label": "Marathi", "code": "mar", "script": "Devanagari"},
+    {"label": "Gujarati", "code": "guj", "script": "Gujarati"},
+    {"label": "Kannada", "code": "kan", "script": "Kannada"},
+    {"label": "Malayalam", "code": "mal", "script": "Malayalam"},
+    {"label": "Punjabi", "code": "pan", "script": "Gurmukhi"},
+    {"label": "Odia", "code": "ori", "script": "Odia"},
+    {"label": "Nepali", "code": "nep", "script": "Devanagari"},
+    {"label": "Sinhala", "code": "sin", "script": "Sinhala"},
+    {"label": "Chinese Simplified", "code": "chi_sim", "script": "Han"},
+    {"label": "Chinese Traditional", "code": "chi_tra", "script": "Han"},
+    {"label": "Japanese", "code": "jpn", "script": "Kana/Kanji"},
+    {"label": "Korean", "code": "kor", "script": "Hangul"},
+    {"label": "French", "code": "fra", "script": "Latin"},
+    {"label": "German", "code": "deu", "script": "Latin"},
+    {"label": "Spanish", "code": "spa", "script": "Latin"},
+    {"label": "Russian", "code": "rus", "script": "Cyrillic"},
+    {"label": "Custom Tesseract language code", "code": "custom", "script": "Any installed traineddata"},
+]
+
 
 TRANSLITERATION_MODELS = [
     {"label": "Automatic LLM transliteration - selected provider", "engine": "auto_llm", "pricing": "depends on selected LLM", "key_required": "selected LLM key or local/Ollama"},
     {"label": "No transliteration", "engine": "none", "pricing": "free", "key_required": "no"},
+    {"label": "Indic NLP Library - free/local", "engine": "indic_nlp", "pricing": "free", "key_required": "no"},
+    {"label": "Aksharamukha - free/local/API", "engine": "aksharamukha", "pricing": "free/API dependent", "key_required": "no/API dependent"},
     {"label": "Indic transliteration rules - free/local", "engine": "indic_rules", "pricing": "free", "key_required": "no"},
+    {"label": "iNLTK transliteration target - free/local optional", "engine": "inltk", "pricing": "free/optional", "key_required": "no"},
+    {"label": "Google Input Tools - browser/manual aid", "engine": "google_input_tools", "pricing": "free/browser", "key_required": "no"},
     {"label": "Bhashini/Indic transliteration - free or platform dependent", "engine": "bhashini", "pricing": "free/platform dependent", "key_required": "BHASHINI_API_KEY if cloud"},
     {"label": "LLM-assisted transliteration - paid/free depending provider", "engine": "llm", "pricing": "depends on selected LLM", "key_required": "selected LLM key"},
 ]
@@ -421,6 +454,10 @@ def ocr_model_options() -> List[Dict[str, str]]:
     return [dict(x) for x in OCR_MODELS]
 
 
+def ocr_language_options() -> List[Dict[str, str]]:
+    return [dict(x) for x in OCR_LANGUAGE_OPTIONS]
+
+
 def transliteration_options() -> List[Dict[str, str]]:
     return [dict(x) for x in TRANSLITERATION_MODELS]
 
@@ -444,6 +481,9 @@ def toolbox_catalog() -> List[Dict[str, str]]:
         ("LLM routing", "free/paid/key", "openai/google-generativeai", "OPENAI_API_KEY/GROK_API_KEY/GOOGLE_API_KEY/HF_TOKEN/OPENROUTER_API_KEY", "provider dropdown + custom endpoint"),
         ("PostgreSQL memory", "free/paid", "psycopg", "DATABASE_URL", "chunks, queries, integration registry"),
         ("OCR", "free/paid", "pytesseract/Pillow", "OCR_LANG/OCR_ENGINE", "Tesseract built in; others selectable integrations"),
+        ("OCR languages", "free/local", "pytesseract", "OCR_LANG", "Tesseract traineddata codes including eng, hin, urd, ara, ben, tam, tel, custom"),
+        ("Semantic chunking", "free/local", "transformers/torch", "CHUNKING_ENGINE/MBERT_MODEL", "section-aware chunks with optional mBERT semantic breakpoints"),
+        ("NLP transliteration", "free/local/optional", "indic_nlp_library/aksharamukha/indic_transliteration", "TRANSLITERATION_ENGINE", "Indic NLP, Aksharamukha, iNLTK target, Google Input Tools guidance, LLM fallback"),
         ("Speech to text", "free/paid", "openai", "OPENAI_API_KEY", "manual transcript + Whisper API + integration targets"),
         ("Text to speech", "free/paid", "none required", "", "safe script + external/free/local model registry"),
         ("Website builder", "free/local", "streamlit", "", "HTML preview and download"),
@@ -930,6 +970,70 @@ def _section(line: str) -> bool:
     return bool(s) and len(s) < 100 and not s.endswith(".") and (s.istitle() or s.lower() in known or bool(re.match(r"^\d+(?:\.\d+)*\s+\w+", s)))
 
 
+def _sentences(text: str) -> List[str]:
+    parts = re.split(r"(?<=[.!?।؟])\s+|\n+", text or "")
+    return [re.sub(r"\s+", " ", p).strip() for p in parts if p.strip()]
+
+
+def _cosine(a: List[float], b: List[float]) -> float:
+    num = sum(x * y for x, y in zip(a, b))
+    da = sum(x * x for x in a) ** 0.5
+    db = sum(y * y for y in b) ** 0.5
+    return num / (da * db) if da and db else 0.0
+
+
+def _mbert_vectors(sentences: List[str]) -> Optional[List[List[float]]]:
+    if not sentences:
+        return []
+    try:
+        import torch
+        from transformers import AutoModel, AutoTokenizer
+
+        model_name = os.getenv("MBERT_MODEL", "bert-base-multilingual-cased")
+        tokenizer = AutoTokenizer.from_pretrained(model_name)
+        model = AutoModel.from_pretrained(model_name)
+        model.eval()
+        out: List[List[float]] = []
+        batch_size = int(os.getenv("MBERT_BATCH_SIZE", "8"))
+        with torch.no_grad():
+            for start in range(0, len(sentences), batch_size):
+                batch = sentences[start:start + batch_size]
+                encoded = tokenizer(batch, padding=True, truncation=True, max_length=256, return_tensors="pt")
+                hidden = model(**encoded).last_hidden_state
+                mask = encoded["attention_mask"].unsqueeze(-1)
+                pooled = (hidden * mask).sum(dim=1) / mask.sum(dim=1).clamp(min=1)
+                out.extend(pooled.cpu().tolist())
+        return out
+    except Exception:
+        return None
+
+
+def _semantic_parts(text: str, max_words: int = 220) -> List[str]:
+    sentences = _sentences(text)
+    if not sentences:
+        return []
+    engine = os.getenv("CHUNKING_ENGINE", "section_semantic").lower()
+    threshold = float(os.getenv("MBERT_BREAK_THRESHOLD", "0.48"))
+    vectors = _mbert_vectors(sentences) if engine == "mbert" else None
+    out: List[str] = []
+    buf: List[str] = []
+    words = 0
+    for i, sentence in enumerate(sentences):
+        sw = len(sentence.split())
+        semantic_break = False
+        if vectors and i > 0:
+            semantic_break = _cosine(vectors[i - 1], vectors[i]) < threshold
+        if buf and (words + sw > max_words or semantic_break):
+            out.append(" ".join(buf).strip())
+            buf = []
+            words = 0
+        buf.append(sentence)
+        words += sw
+    if buf:
+        out.append(" ".join(buf).strip())
+    return out
+
+
 def _chunk(name: str, page: int, text: str, kind: str) -> List[Chunk]:
     section, buf, out = "Document", [], []
 
@@ -937,9 +1041,12 @@ def _chunk(name: str, page: int, text: str, kind: str) -> List[Chunk]:
         nonlocal buf
         if not buf:
             return
-        words = " ".join(buf).split()
-        for i in range(0, len(words), 220):
-            part = " ".join(words[max(0, i - 35): i + 220]).strip()
+        block = " ".join(buf)
+        parts = _semantic_parts(block)
+        if not parts:
+            words = block.split()
+            parts = [" ".join(words[max(0, i - 35): i + 220]).strip() for i in range(0, len(words), 220)]
+        for part in parts:
             if part:
                 out.append(Chunk(name, part, page, section, kind))
         buf = []
@@ -1214,6 +1321,8 @@ def corpus_metadata(corpus: List[Dict[str, Any]], cid: str = "") -> Dict[str, An
         "selected_provider": os.getenv("LLM_PROVIDER", "local"),
         "ocr_engine": os.getenv("OCR_ENGINE", "tesseract"),
         "ocr_lang": os.getenv("OCR_LANG", "eng"),
+        "chunking_engine": os.getenv("CHUNKING_ENGINE", "section_semantic"),
+        "mbert_model": os.getenv("MBERT_MODEL", "bert-base-multilingual-cased"),
         "stt_engine": os.getenv("STT_ENGINE", "manual"),
         "transliteration_engine": os.getenv("TRANSLITERATION_ENGINE", "auto_llm"),
         "compliance_jurisdiction": os.getenv("COMPLIANCE_JURISDICTION", "Global/Unknown"),
@@ -2721,10 +2830,19 @@ def transliteration_instruction(question: str, context: str, provider: str, key:
             "Automatic transliteration requested, but no approved LLM transliteration provider is available. "
             "Preserve the original script exactly and state that transliteration was not performed."
         )
-    if engine in {"auto_llm", "llm", "bhashini", "indic_rules"}:
+    if engine in {"auto_llm", "llm", "bhashini", "indic_rules", "indic_nlp", "aksharamukha", "inltk", "google_input_tools"}:
+        tool_name = {
+            "indic_nlp": "Indic NLP Library",
+            "aksharamukha": "Aksharamukha",
+            "inltk": "iNLTK",
+            "google_input_tools": "Google Input Tools/manual phonetic input",
+            "bhashini": "Bhashini/Indic transliteration",
+            "indic_rules": "Indic transliteration rules",
+        }.get(engine, "the selected LLM")
         return (
-            "Automatic transliteration rule: when non-Latin text appears in the user query, OCR, tables, or retrieved evidence, "
+            f"Automatic transliteration rule using {tool_name}: when non-Latin text appears in the user query, OCR, tables, or retrieved evidence, "
             "keep the original script and add roman transliteration in parentheses on first mention. "
+            "For Hindi or Hinglish, prefer clear Devanagari Hindi text first, then roman transliteration in parentheses where useful. "
             "Do not translate meaning unless the user explicitly asks for translation. "
             "Mark transliteration as approximate when OCR quality, handwriting, spelling, or language detection is uncertain. "
             "Never change numeric values, names, roll numbers, legal identifiers, citations, or units during transliteration."

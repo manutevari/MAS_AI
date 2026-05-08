@@ -41,6 +41,7 @@ from multi_agent import (
     mermaid_mindmap,
     needs_live_search,
     ocr_model_options,
+    ocr_language_options,
     orchestration_manager_plan,
     pinecone_retrieve,
     pinecone_upsert,
@@ -58,6 +59,7 @@ from multi_agent import (
     text_to_speech_options,
     toolbox_catalog,
     transcribe_audio,
+    transliteration_options,
     tts_guidance,
     update_swarm_feedback,
     upsert_integrations_pg,
@@ -73,28 +75,39 @@ st.set_page_config(page_title="Scientific RAG", layout="wide")
 st.markdown(
     """
 <style>
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Noto+Sans+Devanagari:wght@400;500;600;700&display=swap');
+    html, body, [class*="css"], .stMarkdown, .stTextArea, .stButton, .stSelectbox, .stTextInput {
+        font-family: Inter, "Noto Sans Devanagari", "Nirmala UI", "Mangal", system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+    .stMarkdown, .stTextArea textarea, .stChatMessage, p, li {
+        line-height: 1.68;
+        font-size: 0.98rem;
+    }
     .block-container {
-        padding-top: 1.4rem;
-        max-width: 1280px;
+        padding-top: 1.1rem;
+        max-width: 980px;
     }
     h1 {
-        font-size: 2.2rem;
-        margin-bottom: .2rem;
+        font-size: 1.72rem;
+        margin-bottom: .25rem;
+        letter-spacing: 0;
     }
     [data-testid="stSidebar"] {
-        background: #f7f9fb;
+        background: #f8fafc;
+        border-right: 1px solid #e5e7eb;
     }
     div[data-testid="stMetric"] {
         background: #ffffff;
         border: 1px solid #e5e7eb;
-        border-radius: 8px;
+        border-radius: 10px;
         padding: 12px;
     }
     .hero {
         border: 1px solid #e5e7eb;
-        border-radius: 10px;
-        padding: 18px 20px;
-        background: linear-gradient(135deg, #ffffff, #f5fbff);
+        border-radius: 14px;
+        padding: 16px 18px;
+        background: #ffffff;
+        box-shadow: 0 8px 26px rgba(15, 23, 42, .045);
     }
     .chip {
         display: inline-block;
@@ -116,13 +129,39 @@ st.markdown(
     .muted {
         color: #64748b;
     }
+    textarea {
+        border-radius: 14px !important;
+        border-color: #d7dde6 !important;
+        background: #ffffff !important;
+    }
+    [data-testid="stChatMessage"] {
+        background: #ffffff;
+        border: 1px solid #e5e7eb;
+        border-radius: 16px;
+        padding: 10px 14px;
+        box-shadow: 0 8px 24px rgba(15, 23, 42, .04);
+    }
+    [data-testid="stChatMessageContent"] {
+        font-family: Inter, "Noto Sans Devanagari", "Nirmala UI", "Mangal", sans-serif;
+    }
+    .devanagari {
+        font-family: "Noto Sans Devanagari", "Nirmala UI", "Mangal", Inter, sans-serif;
+        font-size: 1.04rem;
+        line-height: 1.85;
+    }
+    .answer-meta {
+        color: #64748b;
+        font-size: .82rem;
+        margin: 4px 0 12px 0;
+    }
     div.stButton > button,
     div.stDownloadButton > button {
-        border-radius: 8px;
-        min-height: 38px;
+        border-radius: 999px;
+        min-height: 40px;
+        font-weight: 600;
     }
     div.stDownloadButton > button {
-        background: #0f766e;
+        background: #111827;
         color: white;
     }
 </style>
@@ -190,6 +229,23 @@ mermaid.initialize({{ startOnLoad: true, theme: "base" }});
 </script>
 """
     components.html(html, height=height, scrolling=True)
+
+
+def render_conversation(user_text: str, answer: str, meta: str = "") -> None:
+    if user_text:
+        with st.chat_message("user"):
+            st.markdown(user_text)
+    with st.chat_message("assistant"):
+        if meta:
+            st.markdown(f'<div class="answer-meta">{escape(meta)}</div>', unsafe_allow_html=True)
+        st.markdown(answer)
+
+
+def render_sources(sources: List[Dict[str, Any]], label: str = "Sources") -> None:
+    if not sources:
+        return
+    with st.expander(label, expanded=False):
+        st.text(format_context(sources, max_chars=14000))
 
 
 def apply_provider(choice: Dict[str, str]) -> str:
@@ -348,52 +404,62 @@ with st.sidebar:
     st.caption("Tavily: configured" if os.getenv("TAVILY_API_KEY") else "Tavily: add TAVILY_API_KEY in Streamlit secrets")
 
     st.divider()
-    extra_models = st.text_area("Extra LLMs", placeholder="Label, provider, model, base_url, key_env")
-    llm_rows = llm_model_catalog(extra_models)
-    free_rows = [m for m in llm_rows if m.get("requires_key") == "no"]
-    paid_rows = [m for m in llm_rows if m not in free_rows]
-    model_group = st.radio("Model group", ["Free / no key", "Paid / key required"], horizontal=False)
-    active_rows = free_rows if model_group.startswith("Free") else paid_rows
-    llm_choice = st.selectbox("LLM model", [m["label"] for m in active_rows])
-    selected_llm = active_rows[[m["label"] for m in active_rows].index(llm_choice)]
-    provider = apply_provider(selected_llm)
-    key_env = selected_llm.get("key_env", "")
-    if model_group.startswith("Paid") and key_env:
-        pasted_key = st.text_input(f"Key for {key_env}", os.getenv(key_env, ""), type="password")
-        if pasted_key:
-            os.environ[key_env] = pasted_key
-        if os.getenv(key_env):
-            st.caption(f"{key_env}: key loaded")
-    else:
-        st.caption("Selected model does not require a key.")
+    with st.expander("Model", expanded=False):
+        extra_models = st.text_area("Extra LLMs", placeholder="Label, provider, model, base_url, key_env")
+        llm_rows = llm_model_catalog(extra_models)
+        free_rows = [m for m in llm_rows if m.get("requires_key") == "no"]
+        paid_rows = [m for m in llm_rows if m not in free_rows]
+        model_group = st.radio("Model group", ["Free / no key", "Paid / key required"], horizontal=False)
+        active_rows = free_rows if model_group.startswith("Free") else paid_rows
+        llm_choice = st.selectbox("LLM model", [m["label"] for m in active_rows])
+        selected_llm = active_rows[[m["label"] for m in active_rows].index(llm_choice)]
+        provider = apply_provider(selected_llm)
+        key_env = selected_llm.get("key_env", "")
+        if model_group.startswith("Paid") and key_env:
+            pasted_key = st.text_input(f"Key for {key_env}", os.getenv(key_env, ""), type="password")
+            if pasted_key:
+                os.environ[key_env] = pasted_key
+            if os.getenv(key_env):
+                st.caption(f"{key_env}: key loaded")
+        else:
+            st.caption("Selected model does not require a key.")
 
-    with st.expander("Custom OpenAI-compatible endpoint"):
-        os.environ["OLLAMA_BASE_URL"] = st.text_input("Ollama base URL", os.getenv("OLLAMA_BASE_URL", "http://localhost:11434/v1"))
-        os.environ["OLLAMA_MODEL"] = st.text_input("Ollama model", os.getenv("OLLAMA_MODEL", "llama3.1"))
-        os.environ["CUSTOM_LLM_BASE_URL"] = st.text_input("Custom base URL", os.getenv("CUSTOM_LLM_BASE_URL", ""))
-        os.environ["CUSTOM_LLM_MODEL"] = st.text_input("Custom model", os.getenv("CUSTOM_LLM_MODEL", ""))
-        custom_key_env = st.text_input("Custom key env", os.getenv("CUSTOM_LLM_API_KEY_ENV", "CUSTOM_LLM_API_KEY"))
-        os.environ["CUSTOM_LLM_API_KEY_ENV"] = custom_key_env
+        with st.expander("Custom OpenAI-compatible endpoint"):
+            os.environ["OLLAMA_BASE_URL"] = st.text_input("Ollama base URL", os.getenv("OLLAMA_BASE_URL", "http://localhost:11434/v1"))
+            os.environ["OLLAMA_MODEL"] = st.text_input("Ollama model", os.getenv("OLLAMA_MODEL", "llama3.1"))
+            os.environ["CUSTOM_LLM_BASE_URL"] = st.text_input("Custom base URL", os.getenv("CUSTOM_LLM_BASE_URL", ""))
+            os.environ["CUSTOM_LLM_MODEL"] = st.text_input("Custom model", os.getenv("CUSTOM_LLM_MODEL", ""))
+            custom_key_env = st.text_input("Custom key env", os.getenv("CUSTOM_LLM_API_KEY_ENV", "CUSTOM_LLM_API_KEY"))
+            os.environ["CUSTOM_LLM_API_KEY_ENV"] = custom_key_env
 
-    st.divider()
-    retrieval = st.selectbox("Retrieval", ["TF-IDF", "OpenAI text-embedding-3-large", "Pinecone"])
-    ocr = st.selectbox("OCR", [f"{m['label']} | {m['pricing']}" for m in ocr_model_options()])
-    os.environ["OCR_ENGINE"] = ocr_model_options()[[f"{m['label']} | {m['pricing']}" for m in ocr_model_options()].index(ocr)]["engine"]
-    os.environ["OCR_LANG"] = st.text_input("OCR language", os.getenv("OCR_LANG", "eng"))
-    os.environ["TRANSLITERATION_ENGINE"] = os.getenv("TRANSLITERATION_ENGINE", "auto_llm")
-    stt = st.selectbox("Speech to text", [m["label"] for m in speech_to_text_options()])
-    os.environ["STT_ENGINE"] = speech_to_text_options()[[m["label"] for m in speech_to_text_options()].index(stt)]["engine"]
-    auto_mic_run = st.checkbox("Auto-run mic to smart task", value=True)
+    with st.expander("Retrieval and input processing", expanded=False):
+        retrieval = st.selectbox("Retrieval", ["TF-IDF", "OpenAI text-embedding-3-large", "Pinecone"])
+        chunking = st.selectbox("Chunking", ["section_semantic", "mbert"], help="mBERT uses bert-base-multilingual-cased if transformers/torch are installed.")
+        os.environ["CHUNKING_ENGINE"] = chunking
+        ocr = st.selectbox("OCR", [f"{m['label']} | {m['pricing']}" for m in ocr_model_options()])
+        os.environ["OCR_ENGINE"] = ocr_model_options()[[f"{m['label']} | {m['pricing']}" for m in ocr_model_options()].index(ocr)]["engine"]
+        lang_rows = ocr_language_options()
+        default_lang = next((i for i, row in enumerate(lang_rows) if row["code"] == os.getenv("OCR_LANG", "eng")), 1)
+        lang_choice = st.selectbox("OCR language", [f"{row['label']} ({row['code']})" for row in lang_rows], index=default_lang)
+        lang_row = lang_rows[[f"{row['label']} ({row['code']})" for row in lang_rows].index(lang_choice)]
+        os.environ["OCR_LANG"] = st.text_input("Custom OCR code", os.getenv("OCR_LANG", "eng+hin+urd")) if lang_row["code"] == "custom" else lang_row["code"]
+        trans_rows = transliteration_options()
+        trans_choice = st.selectbox("Transliteration engine", [m["label"] for m in trans_rows], index=0)
+        os.environ["TRANSLITERATION_ENGINE"] = trans_rows[[m["label"] for m in trans_rows].index(trans_choice)]["engine"]
+        st.caption("Transliteration uses the selected NLP/LLM adapter when available; otherwise original script is preserved.")
+        stt = st.selectbox("Speech to text", [m["label"] for m in speech_to_text_options()])
+        os.environ["STT_ENGINE"] = speech_to_text_options()[[m["label"] for m in speech_to_text_options()].index(stt)]["engine"]
+        auto_mic_run = st.checkbox("Auto-run mic to smart task", value=True)
+        top_k = st.slider("Evidence", 3, 15, 8)
 
-    st.divider()
-    lawful = st.checkbox("Lawful basis/consent for personal data")
-    cloud = st.checkbox("Allow cloud processing")
-    os.environ["DPDP_LAWFUL_BASIS"] = str(lawful).lower()
-    os.environ["DPDP_CLOUD_CONSENT"] = str(lawful and cloud).lower()
-    os.environ["DPDP_REDACT"] = str(st.checkbox("Redact personal identifiers", value=True)).lower()
-    os.environ["HUMAN_REVIEW_CONFIRMED"] = str(st.checkbox("Human reviewer responsible")).lower()
-    os.environ["REQUIRE_HUMAN_EXPORT_APPROVAL"] = str(st.checkbox("Require approval before export", value=True)).lower()
-    top_k = st.slider("Evidence", 3, 15, 8)
+    with st.expander("Privacy and approval", expanded=False):
+        lawful = st.checkbox("Lawful basis/consent for personal data")
+        cloud = st.checkbox("Allow cloud processing")
+        os.environ["DPDP_LAWFUL_BASIS"] = str(lawful).lower()
+        os.environ["DPDP_CLOUD_CONSENT"] = str(lawful and cloud).lower()
+        os.environ["DPDP_REDACT"] = str(st.checkbox("Redact personal identifiers", value=True)).lower()
+        os.environ["HUMAN_REVIEW_CONFIRMED"] = str(st.checkbox("Human reviewer responsible")).lower()
+        os.environ["REQUIRE_HUMAN_EXPORT_APPROVAL"] = str(st.checkbox("Require approval before export", value=True)).lower()
 
 paths = [save_upload(f) for f in uploads] if uploads else ([Path(local_path)] if local_path else [])
 web_urls = [u.strip() for u in urls.splitlines() if u.strip()] if fetch_ok else []
@@ -411,12 +477,13 @@ metadata = corpus_metadata(corpus, cid)
 supabase_log_metadata(metadata)
 if retrieval == "Pinecone" and corpus:
     st.caption("Pinecone: indexed" if pinecone_upsert(corpus, cid) else "Pinecone: not configured or indexing failed")
-st.success(summary)
-status_cols = st.columns(4)
-status_cols[0].metric("Chunks", len(corpus))
-status_cols[1].metric("Sources", metadata.get("source_count", 0))
-status_cols[2].metric("Provider", provider)
-status_cols[3].metric("Jurisdiction", jurisdiction)
+st.caption(summary)
+with st.expander("Session status", expanded=False):
+    status_cols = st.columns(4)
+    status_cols[0].metric("Chunks", len(corpus))
+    status_cols[1].metric("Sources", metadata.get("source_count", 0))
+    status_cols[2].metric("Provider", provider)
+    status_cols[3].metric("Jurisdiction", jurisdiction)
 st.markdown(
     "".join(
         [
@@ -559,14 +626,17 @@ if action == "Chat":
                 retrieval_engine="openai_embeddings" if retrieval in {"OpenAI text-embedding-3-large", "Pinecone"} else "tfidf",
             )
         )
-    st.markdown(result["answer"])
+    render_conversation(brief, result["answer"], f"{result.get('provider', provider)} · {result.get('model', '')}")
+    render_sources(result.get("sources", []), "Retrieved evidence")
     log_query_pg(cid, brief, result["answer"], result.get("provider", ""), result.get("model", ""))
     show_download("answer", json.dumps(result, indent=2), "answer.json", "application/json")
 
 elif action == "Agent chat":
     result = asyncio.run(answer_with_agent_pipeline_from_corpus(brief, corpus, summary, provider))
-    st.markdown(result["answer"])
-    st.json(result.get("conversation", []))
+    render_conversation(brief, result["answer"], f"{result.get('provider', provider)} · planner → executor → verifier")
+    render_sources(result.get("sources", []), "Retrieved evidence")
+    with st.expander("Agent trace", expanded=False):
+        st.json(result.get("conversation", []))
     show_download("agent answer", json.dumps(result, indent=2), "agent_answer.json", "application/json")
 
 elif action == "Ask suggestions":
@@ -576,17 +646,20 @@ elif action == "Ask suggestions":
 
 elif action == "Vector knowledge":
     out = vector_space_knowledge(corpus, brief or "entire corpus", k=25)
-    st.json(out["summary"])
-    with st.expander("Top evidence"):
-        st.text(format_context(out["top_evidence"], max_chars=14000))
-    st.markdown("**Suggested questions**")
-    st.markdown("\n".join(f"- {q}" for q in out["suggested_questions"]))
+    render_conversation(brief, "I reviewed the indexed evidence space. Open the panels below for source coverage, top evidence, and suggested questions.", "Vector knowledge")
+    with st.expander("Coverage summary", expanded=True):
+        st.json(out["summary"])
+    render_sources(out["top_evidence"], "Top evidence")
+    with st.expander("Suggested questions", expanded=False):
+        st.markdown("\n".join(f"- {q}" for q in out["suggested_questions"]))
     show_download("vector knowledge", json.dumps(out, indent=2), "vector_knowledge.json", "application/json")
 
 elif action == "Live search":
     out = vector_space_knowledge(corpus, brief or "live search", k=25)
-    st.json(out["summary"])
-    st.text(format_context(out["top_evidence"], max_chars=14000))
+    render_conversation(brief, "Live/permitted evidence has been collected and indexed. Open the evidence panel to inspect the retrieved snippets.", "Live search evidence")
+    with st.expander("Coverage summary", expanded=True):
+        st.json(out["summary"])
+    render_sources(out["top_evidence"], "Live evidence")
     show_download("live search evidence", json.dumps(out, indent=2), "live_search_evidence.json", "application/json")
 
 elif action == "Ingest latest updates":

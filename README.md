@@ -12,6 +12,8 @@ Core capabilities:
 - TF-IDF, OpenAI embeddings, and optional Pinecone retrieval
 - PDF, text, spreadsheet, image/OCR, ZIP, and web evidence ingestion
 - automatic LLM-assisted transliteration for non-Latin query/OCR/evidence text when an approved provider is active
+- OCR presets for English, Hindi, Urdu, Indian languages, Arabic, CJK, European languages, and custom Tesseract codes
+- section-aware semantic chunking with optional mBERT breakpoints through `bert-base-multilingual-cased`
 - strict anti-hallucination guardrails with citations and missing-evidence handling
 - NotebookLM-style, Physics Wallah-style, and textbook-style quizzes, flashcards, solutions, and question papers from uploaded sources
 - school clerk automation for result sheets, attendance, fee reminders, certificates, roll lists, notices, and parent communication drafts
@@ -184,13 +186,14 @@ SUPABASE_METADATA_TABLE = "rag_metadata"
 - `multi_agent.py`: compact RAG core
 - `requirements.txt`: deployment dependencies
 
-## Simple UI
+## Modern Query-First UI
 
-The interface is intentionally one-screen:
+The interface is intentionally one-screen and chat-oriented:
 
-- sidebar: files, URLs, models, OCR/STT, privacy, and human approval
+- sidebar: files and URLs first; model, retrieval, OCR/STT, privacy, and approval controls are grouped in collapsed panels
 - main screen: one brief/query box and one `Run` button; tools stay hidden unless advanced manual override is opened
-- output area: review result, approve, download
+- output area: ChatGPT/Claude-style user and assistant messages, optional source panels, approval, and download
+- Hindi/Devanagari content uses Devanagari font fallbacks such as Noto Sans Devanagari, Nirmala UI, and Mangal
 
 The default UI is query-first. The app chooses the workflow internally. Advanced manual override can expose Chat, Agent chat, Ask suggestions, Vector knowledge, Live search, AI policy scan, School clerk, Study quiz, Website, App blueprint, Codex workflow, Template, Voiceover, Marketing, Media inventory, Mindmap, Visual maps, Integrations, Swarm, Toolbox, Compliance, and Metadata.
 
@@ -393,7 +396,9 @@ Heavy engines are exposed as integration targets instead of being forced into th
 
 ## OCR
 
-Set `OCR_LANG` to a Tesseract language code such as `eng`, `hin`, `fra`, or `eng+hin`. The server must have the matching Tesseract language data installed.
+Set `OCR_LANG` to a Tesseract language code such as `eng`, `hin`, `urd`, `ara`, `ben`, `tam`, `tel`, `fra`, or `eng+hin+urd`. The server must have the matching Tesseract language data installed.
+
+The advanced processing panel includes presets for English, Hindi, Urdu, Arabic, Sanskrit, Bengali, Tamil, Telugu, Marathi, Gujarati, Kannada, Malayalam, Punjabi, Odia, Nepali, Sinhala, Chinese, Japanese, Korean, French, German, Spanish, Russian, and a custom Tesseract code field.
 
 OCR dropdown options include:
 
@@ -410,6 +415,12 @@ Only Tesseract is kept as a standard lightweight dependency in this deploy packa
 ## Transliteration
 
 Transliteration is hidden from the normal UI and runs automatically. The model keeps the original script, adds roman transliteration on first mention, does not translate meaning unless asked, and marks uncertain OCR/transliteration as approximate. If cloud processing is not approved or no LLM key/local provider is available, the app preserves original script and states that automatic LLM transliteration was not performed. The grounding guard still applies: transliterated text must be treated as OCR-derived evidence and uncertainty must be stated when the source text is unclear.
+
+Advanced transliteration targets include Indic NLP Library, Aksharamukha, Indic transliteration rules, iNLTK target mode, Google Input Tools guidance, Bhashini target mode, and LLM-assisted transliteration. Optional NLP libraries are used when installed; otherwise the app keeps original text and lets the selected approved LLM handle transliteration in the answer.
+
+## Semantic Chunking
+
+Default chunking is section-aware and sentence-based so tables, headings, and document structure are less likely to be broken arbitrarily. Set `CHUNKING_ENGINE=mbert` to enable optional mBERT semantic breakpoints with `MBERT_MODEL=bert-base-multilingual-cased`. If `transformers`/`torch` or the model are unavailable, the app falls back to local section-aware chunking.
 
 ## Speech To Text
 
