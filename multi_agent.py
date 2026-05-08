@@ -1547,6 +1547,24 @@ def orchestration_manager_plan(
             confidence = 0.88
             break
 
+    routing_mode = "rule-based"
+    llm_route = _llm_select_workflow(
+        query=query,
+        actions=[r[0] for r in rules] + ["Agent chat", "Chat"],
+        evidence_state={
+            "has_documents": has_docs,
+            "has_url_or_live_evidence": has_web,
+            "has_media_or_ocr": has_media,
+            "live_search_enabled": live_search_enabled,
+        },
+        provider_hint=provider,
+    )
+    if llm_route:
+        selected_action = llm_route["selected_action"]
+        rationale = llm_route["rationale"]
+        confidence = llm_route["confidence"]
+        routing_mode = "llm-assisted"
+
     if selected_action == "Live search" and not live_search_enabled:
         selected_action = "Agent chat" if has_docs else "Chat"
         rationale += " Live search is disabled, so the manager falls back to grounded chat."
@@ -1557,7 +1575,7 @@ def orchestration_manager_plan(
 
     agents = [
         {"agent": "human_supervisor", "role": "approval, policy, final authority", "rank": 0},
-        {"agent": "orchestration_manager", "role": "classify intent and select tools", "rank": 1},
+        {"agent": "smart_router", "role": "classify intent and select tools", "rank": 1},
         {"agent": "planner", "role": "break query into tool steps", "rank": 2},
         {"agent": "retriever", "role": "retrieve uploaded/web/vector evidence", "rank": 3},
         {"agent": "school_clerk", "role": "school office/result workflow when selected", "rank": 4},
@@ -1591,6 +1609,7 @@ def orchestration_manager_plan(
         "provider": provider,
         "retrieval_engine": retrieval_engine,
         "jurisdiction": jurisdiction,
+        "routing_mode": routing_mode,
     }
 
 
@@ -2686,6 +2705,90 @@ def _provider() -> Tuple[str, str, str, str | None]:
     if p == "custom":
         return p, os.getenv("CUSTOM_LLM_MODEL", "model-name"), os.getenv("CUSTOM_LLM_BASE_URL", ""), os.getenv(os.getenv("CUSTOM_LLM_API_KEY_ENV", "CUSTOM_LLM_API_KEY"))
     return p, os.getenv("OPENAI_MODEL", "gpt-4o-mini"), os.getenv("OPENAI_BASE_URL", ""), os.getenv("OPENAI_API_KEY")
+
+
+def _llm_select_workflow(
+    query: str,
+    actions: List[str],
+    evidence_state: Dict[str, Any],
+    provider_hint: str = "local",
+) -> Optional[Dict[str, Any]]:
+    """Use the selected LLM as an internal router when policy and keys allow it."""
+
+    provider, model, base_url, key = _provider()
+    if provider == "local" or not key:
+        return None
+    if provider != "ollama" and os.getenv("DPDP_CLOUD_CONSENT", "false").lower() != "true":
+        return None
+
+    system = (
+        "You are an internal workflow router, not an answering assistant. "
+        "Choose exactly one workflow from the allowed list. "
+        "Prefer the smallest workflow that satisfies the user's request. "
+        "Return only JSON with keys: selected_action, confidence, rationale."
+    )
+    user = {
+        "query": query,
+        "allowed_actions": actions,
+        "evidence_state": evidence_state,
+        "selected_provider": provider_hint,
+        "routing_policy": [
+            "Use School clerk for marksheets, result generation, attendance, certificates, fees, school notices.",
+            "Use Study quiz for exam practice, MCQ, question papers, flashcards.",
+            "Use Visual maps for mindmaps, flowcharts, concept maps, diagrams.",
+            "Use Chat or Agent chat for ordinary document questions.",
+            "Use Live search only when live_search_enabled is true and query needs fresh information.",
+            "Keep human review above every workflow.",
+        ],
+    }
+    try:
+        if provider == "gemini":
+            import google.generativeai as genai
+
+            genai.configure(api_key=key)
+            out = genai.GenerativeModel(model).generate_content(system + "\n\n" + json.dumps(user))
+            text = getattr(out, "text", "") or ""
+        elif provider == "claude":
+            payload = {
+                "model": model,
+                "max_tokens": 300,
+                "temperature": 0,
+                "system": system,
+                "messages": [{"role": "user", "content": json.dumps(user)}],
+            }
+            req = Request(
+                base_url,
+                data=json.dumps(payload).encode("utf-8"),
+                headers={"Content-Type": "application/json", "x-api-key": key or "", "anthropic-version": "2023-06-01", "User-Agent": USER_AGENT},
+                method="POST",
+            )
+            with urlopen(req, timeout=18) as resp:
+                data = json.loads(resp.read(500_000).decode("utf-8"))
+            text = "\n".join(part.get("text", "") for part in data.get("content", []) if part.get("type") == "text")
+        else:
+            from openai import OpenAI
+
+            client = OpenAI(api_key=key, base_url=base_url or None)
+            out = client.chat.completions.create(
+                model=model,
+                messages=[{"role": "system", "content": system}, {"role": "user", "content": json.dumps(user)}],
+                temperature=0,
+                max_tokens=300,
+            )
+            text = out.choices[0].message.content or ""
+        start, end = text.find("{"), text.rfind("}")
+        data = json.loads(text[start: end + 1] if start != -1 and end != -1 else text)
+        action = str(data.get("selected_action", "")).strip()
+        if action not in actions:
+            return None
+        confidence = float(data.get("confidence", 0.78))
+        return {
+            "selected_action": action,
+            "confidence": max(0.5, min(confidence, 0.98)),
+            "rationale": str(data.get("rationale", "LLM selected the most relevant workflow."))[:400],
+        }
+    except Exception:
+        return None
 
 
 def generate(question: str, chunks: List[Dict[str, Any]], external: bool = False, history: Optional[List[Dict[str, str]]] = None) -> Dict[str, Any]:

@@ -22,8 +22,8 @@ Core capabilities:
 - Ollama, OpenAI, Claude, Grok, Gemini, Hugging Face, OpenRouter, and custom endpoints
 - India DPDP plus international compliance controls
 - human-in-the-loop approvals, metadata exports, and swarm governance
-- orchestration manager that routes mic/text/doc/URL queries to the right agent and tool workflow
-- mic transcription can auto-route through the orchestration manager to execute the required task
+- hidden smart router that sends mic/text/doc/URL queries to the right agent and tool workflow
+- mic transcription can auto-route through smart workflow selection to execute the required task
 
 Storage and search:
 
@@ -188,18 +188,19 @@ SUPABASE_METADATA_TABLE = "rag_metadata"
 The interface is intentionally one-screen:
 
 - sidebar: files, URLs, models, OCR/STT, privacy, and human approval
-- main screen: one `Action` dropdown, one brief/query box, one `Run` button
+- main screen: one smart workflow selector, one brief/query box, one `Run` button
 - output area: review result, approve, download
 
-Actions include Orchestration manager, Chat, Agent chat, Ask suggestions, Vector knowledge, Live search, AI policy scan, School clerk, Study quiz, Website, App blueprint, Codex workflow, Template, Voiceover, Marketing, Media inventory, Mindmap, Visual maps, Integrations, Swarm, Toolbox, Compliance, and Metadata.
+Workflows include Smart auto, Chat, Agent chat, Ask suggestions, Vector knowledge, Live search, AI policy scan, School clerk, Study quiz, Website, App blueprint, Codex workflow, Template, Voiceover, Marketing, Media inventory, Mindmap, Visual maps, Integrations, Swarm, Toolbox, Compliance, and Metadata.
 
-## Orchestration Manager
+## Smart Auto Routing
 
-The `Orchestration manager` action is the default router for normal use:
+`Smart auto` keeps the orchestration manager inside the pipeline instead of exposing it as a visible tool:
 
 - accepts text, mic transcription, uploaded documents, ZIP/PDF/image/spreadsheet evidence, and permitted URL/live evidence
 - selects the smallest useful workflow such as Chat, Agent chat, School clerk, Study quiz, Website, Visual maps, Marketing, WhatsApp automation, Compliance, or Live search
-- shows the selected agents, tools, evidence state, confidence, and rationale before executing
+- uses the selected LLM as an internal router when a local/approved provider is available, otherwise falls back to deterministic rules
+- can show compact routing details without making the manager a user-facing action
 - keeps human review above the orchestrator and all agents
 
 ## School Clerk Automation

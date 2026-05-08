@@ -385,7 +385,7 @@ with st.sidebar:
     os.environ["TRANSLITERATION_ENGINE"] = transliteration_options()[[m["label"] for m in transliteration_options()].index(trans)]["engine"]
     stt = st.selectbox("Speech to text", [m["label"] for m in speech_to_text_options()])
     os.environ["STT_ENGINE"] = speech_to_text_options()[[m["label"] for m in speech_to_text_options()].index(stt)]["engine"]
-    auto_mic_run = st.checkbox("Auto-run mic through orchestration manager", value=True)
+    auto_mic_run = st.checkbox("Auto-run mic to smart task", value=True)
 
     st.divider()
     lawful = st.checkbox("Lawful basis/consent for personal data")
@@ -438,9 +438,9 @@ if st.session_state.get("pending_action_choice"):
     st.session_state["action_choice"] = st.session_state.pop("pending_action_choice")
 
 action = st.selectbox(
-    "Action",
+    "Workflow",
     [
-        "Orchestration manager",
+        "Smart auto",
         "Chat",
         "Agent chat",
         "Ask suggestions",
@@ -503,7 +503,7 @@ with st.container(border=True):
         transcript = transcribe_audio(speech.getvalue(), name, os.getenv("STT_ENGINE", "manual"), os.getenv("OCR_LANG", "eng").split("+")[0])
         st.session_state["pending_brief_text"] = transcript
         if auto_mic_run:
-            st.session_state["pending_action_choice"] = "Orchestration manager"
+            st.session_state["pending_action_choice"] = "Smart auto"
             st.session_state["pending_auto_run"] = True
         st.rerun()
 
@@ -526,12 +526,12 @@ quiz_active = action == "Study quiz" and bool(st.session_state.get("live_exam"))
 auto_run = bool(st.session_state.pop("pending_auto_run", False))
 run = st.button("Run", type="primary") or auto_run
 if auto_run:
-    st.success("Mic transcript auto-routed through the orchestration manager.")
+    st.success("Mic transcript routed to the best available workflow.")
 if not run and not quiz_active:
     st.stop()
 
 manager_plan: Dict[str, Any] | None = None
-if action == "Orchestration manager":
+if action == "Smart auto":
     manager_plan = orchestration_manager_plan(
         brief,
         corpus,
@@ -540,20 +540,18 @@ if action == "Orchestration manager":
         live_search_enabled=use_tavily,
         jurisdiction=jurisdiction,
     )
-    st.markdown("### Orchestration Manager")
     c1, c2, c3 = st.columns(3)
-    c1.metric("Selected workflow", manager_plan["selected_action"])
+    c1.metric("Smart route", manager_plan["selected_action"])
     c2.metric("Confidence", f"{int(manager_plan['confidence'] * 100)}%")
-    c3.metric("LLM/provider", provider)
-    st.info(manager_plan["rationale"])
-    with st.expander("Selected agents and tools", expanded=True):
-        st.markdown("**Agents**")
+    c3.metric("Provider", provider)
+    st.caption(manager_plan["rationale"])
+    with st.expander("Why this workflow was selected", expanded=False):
+        st.caption(f"Routing mode: {manager_plan.get('routing_mode', 'rule-based')}")
         st.dataframe(manager_plan["agents"], use_container_width=True)
-        st.markdown("**Tools**")
         st.dataframe(manager_plan["tools"], use_container_width=True)
         st.json(manager_plan["evidence_state"])
     action = manager_plan["selected_action"]
-    st.caption(f"Executing selected workflow: {action}")
+    st.caption(f"Running: {action}")
 
 if action == "Chat":
     if not corpus and not use_tavily:
