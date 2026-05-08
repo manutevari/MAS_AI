@@ -214,6 +214,7 @@ OCR_MODELS = [
 
 
 TRANSLITERATION_MODELS = [
+    {"label": "Automatic LLM transliteration - selected provider", "engine": "auto_llm", "pricing": "depends on selected LLM", "key_required": "selected LLM key or local/Ollama"},
     {"label": "No transliteration", "engine": "none", "pricing": "free", "key_required": "no"},
     {"label": "Indic transliteration rules - free/local", "engine": "indic_rules", "pricing": "free", "key_required": "no"},
     {"label": "Bhashini/Indic transliteration - free or platform dependent", "engine": "bhashini", "pricing": "free/platform dependent", "key_required": "BHASHINI_API_KEY if cloud"},
@@ -1214,7 +1215,7 @@ def corpus_metadata(corpus: List[Dict[str, Any]], cid: str = "") -> Dict[str, An
         "ocr_engine": os.getenv("OCR_ENGINE", "tesseract"),
         "ocr_lang": os.getenv("OCR_LANG", "eng"),
         "stt_engine": os.getenv("STT_ENGINE", "manual"),
-        "transliteration_engine": os.getenv("TRANSLITERATION_ENGINE", "none"),
+        "transliteration_engine": os.getenv("TRANSLITERATION_ENGINE", "auto_llm"),
         "compliance_jurisdiction": os.getenv("COMPLIANCE_JURISDICTION", "Global/Unknown"),
         "human_review_confirmed": os.getenv("HUMAN_REVIEW_CONFIRMED", "false"),
         "export_approval_required": os.getenv("REQUIRE_HUMAN_EXPORT_APPROVAL", "true"),
@@ -2707,6 +2708,30 @@ def _provider() -> Tuple[str, str, str, str | None]:
     return p, os.getenv("OPENAI_MODEL", "gpt-4o-mini"), os.getenv("OPENAI_BASE_URL", ""), os.getenv("OPENAI_API_KEY")
 
 
+def _has_non_latin(text: str) -> bool:
+    return bool(re.search(r"[\u0900-\u097F\u0980-\u09FF\u0A00-\u0A7F\u0A80-\u0AFF\u0B00-\u0B7F\u0B80-\u0BFF\u0C00-\u0C7F\u0C80-\u0CFF\u0D00-\u0D7F\u0600-\u06FF]", text or ""))
+
+
+def transliteration_instruction(question: str, context: str, provider: str, key: Optional[str]) -> str:
+    engine = os.getenv("TRANSLITERATION_ENGINE", "auto_llm").lower()
+    if engine == "none" or not _has_non_latin(f"{question}\n{context}"):
+        return ""
+    if engine in {"auto_llm", "llm"} and (provider == "local" or not key):
+        return (
+            "Automatic transliteration requested, but no approved LLM transliteration provider is available. "
+            "Preserve the original script exactly and state that transliteration was not performed."
+        )
+    if engine in {"auto_llm", "llm", "bhashini", "indic_rules"}:
+        return (
+            "Automatic transliteration rule: when non-Latin text appears in the user query, OCR, tables, or retrieved evidence, "
+            "keep the original script and add roman transliteration in parentheses on first mention. "
+            "Do not translate meaning unless the user explicitly asks for translation. "
+            "Mark transliteration as approximate when OCR quality, handwriting, spelling, or language detection is uncertain. "
+            "Never change numeric values, names, roll numbers, legal identifiers, citations, or units during transliteration."
+        )
+    return ""
+
+
 def _llm_select_workflow(
     query: str,
     actions: List[str],
@@ -2795,16 +2820,25 @@ def generate(question: str, chunks: List[Dict[str, Any]], external: bool = False
     provider, model, base_url, key = _provider()
     cloud_blocked = provider not in {"local"} and os.getenv("DPDP_CLOUD_CONSENT", "false").lower() != "true"
     if cloud_blocked:
-        return {"answer": _local_answer(question, chunks) + "\n\nCloud LLM was blocked because DPDP cloud-processing consent/lawful basis was not enabled.", "provider": "local", "model": "dpdp-privacy-gate"}
+        note = "\n\nCloud LLM was blocked because DPDP cloud-processing consent/lawful basis was not enabled."
+        if os.getenv("TRANSLITERATION_ENGINE", "auto_llm").lower() != "none" and _has_non_latin(question + "\n" + format_context(chunks, 2500)):
+            note += " Automatic LLM transliteration was also blocked; original script is preserved."
+        return {"answer": _local_answer(question, chunks) + note, "provider": "local", "model": "dpdp-privacy-gate"}
     safe_chunks = redacted_chunks(chunks) if provider != "local" else chunks
     context = format_context(safe_chunks)
+    translit_rule = transliteration_instruction(question, context, provider, key)
     rule = (
         "You are a scientific RAG assistant with strict research temperament. Use only uploaded-document evidence. Do not use memory, assumptions, or outside knowledge. Every factual claim must cite source filename and page/section from the evidence. Preserve units, numeric values, denominators, sample sizes, protein/gene names, methods, table/figure context, uncertainty, OCR text, transliteration uncertainty, and citations. Separate observation from interpretation. Do not overclaim causality, novelty, safety, clinical relevance, or statistical significance unless the evidence states it. If evidence is insufficient, answer: 'Not found in uploaded documents' and list the missing evidence."
         if not external else
         "You are a scientific RAG assistant with strict research temperament. Use uploaded evidence first. Every document-supported claim must cite source filename and page/section. Label any outside/open-source knowledge separately and never mix it with document-supported claims. Mark transliteration as approximate unless directly supported by OCR text. Do not overclaim causality, safety, clinical relevance, or statistical significance."
     )
+    if translit_rule:
+        rule += "\n\n" + translit_rule
     if provider == "local" or not key:
-        return {"answer": _local_answer(question, chunks), "provider": "local", "model": "evidence-only"}
+        answer = _local_answer(question, chunks)
+        if translit_rule and _has_non_latin(f"{question}\n{context}"):
+            answer += "\n\nTransliteration note: automatic LLM transliteration was requested, but no approved LLM provider/key is active. Original script is preserved."
+        return {"answer": answer, "provider": "local", "model": "evidence-only"}
     if provider == "gemini":
         try:
             import google.generativeai as genai

@@ -58,7 +58,6 @@ from multi_agent import (
     text_to_speech_options,
     toolbox_catalog,
     transcribe_audio,
-    transliteration_options,
     tts_guidance,
     update_swarm_feedback,
     upsert_integrations_pg,
@@ -381,8 +380,7 @@ with st.sidebar:
     ocr = st.selectbox("OCR", [f"{m['label']} | {m['pricing']}" for m in ocr_model_options()])
     os.environ["OCR_ENGINE"] = ocr_model_options()[[f"{m['label']} | {m['pricing']}" for m in ocr_model_options()].index(ocr)]["engine"]
     os.environ["OCR_LANG"] = st.text_input("OCR language", os.getenv("OCR_LANG", "eng"))
-    trans = st.selectbox("Transliteration", [m["label"] for m in transliteration_options()])
-    os.environ["TRANSLITERATION_ENGINE"] = transliteration_options()[[m["label"] for m in transliteration_options()].index(trans)]["engine"]
+    os.environ["TRANSLITERATION_ENGINE"] = os.getenv("TRANSLITERATION_ENGINE", "auto_llm")
     stt = st.selectbox("Speech to text", [m["label"] for m in speech_to_text_options()])
     os.environ["STT_ENGINE"] = speech_to_text_options()[[m["label"] for m in speech_to_text_options()].index(stt)]["engine"]
     auto_mic_run = st.checkbox("Auto-run mic to smart task", value=True)
@@ -434,40 +432,39 @@ st.markdown(
 if "brief_text" not in st.session_state:
     st.session_state["brief_text"] = ""
 
-if st.session_state.get("pending_action_choice"):
-    st.session_state["action_choice"] = st.session_state.pop("pending_action_choice")
+WORKFLOWS = [
+    "Chat",
+    "Agent chat",
+    "Ask suggestions",
+    "Vector knowledge",
+    "Live search",
+    "Ingest latest updates",
+    "AI policy scan",
+    "School clerk",
+    "Study quiz",
+    "Website",
+    "App blueprint",
+    "Codex workflow",
+    "Template",
+    "Voiceover",
+    "WhatsApp automation",
+    "Marketing",
+    "Media inventory",
+    "Mindmap",
+    "Visual maps",
+    "Integrations",
+    "Swarm",
+    "Toolbox",
+    "Compliance",
+    "Metadata",
+]
+action = "Smart auto"
+with st.expander("Advanced manual workflow", expanded=False):
+    if st.checkbox("Choose a workflow manually"):
+        action = st.selectbox("Workflow", WORKFLOWS)
+    else:
+        st.caption("Smart routing is active. The app selects the required tool from the query, mic transcript, uploaded files, and URLs.")
 
-action = st.selectbox(
-    "Workflow",
-    [
-        "Smart auto",
-        "Chat",
-        "Agent chat",
-        "Ask suggestions",
-        "Vector knowledge",
-        "Live search",
-        "Ingest latest updates",
-        "AI policy scan",
-        "School clerk",
-        "Study quiz",
-        "Website",
-        "App blueprint",
-        "Codex workflow",
-        "Template",
-        "Voiceover",
-        "WhatsApp automation",
-        "Marketing",
-        "Media inventory",
-        "Mindmap",
-        "Visual maps",
-        "Integrations",
-        "Swarm",
-        "Toolbox",
-        "Compliance",
-        "Metadata",
-    ],
-    key="action_choice",
-)
 if st.session_state.get("pending_brief_text"):
     st.session_state["brief_text"] = st.session_state.pop("pending_brief_text")
 st.markdown("### Ask")
@@ -503,7 +500,6 @@ with st.container(border=True):
         transcript = transcribe_audio(speech.getvalue(), name, os.getenv("STT_ENGINE", "manual"), os.getenv("OCR_LANG", "eng").split("+")[0])
         st.session_state["pending_brief_text"] = transcript
         if auto_mic_run:
-            st.session_state["pending_action_choice"] = "Smart auto"
             st.session_state["pending_auto_run"] = True
         st.rerun()
 
@@ -540,18 +536,15 @@ if action == "Smart auto":
         live_search_enabled=use_tavily,
         jurisdiction=jurisdiction,
     )
-    c1, c2, c3 = st.columns(3)
-    c1.metric("Smart route", manager_plan["selected_action"])
-    c2.metric("Confidence", f"{int(manager_plan['confidence'] * 100)}%")
-    c3.metric("Provider", provider)
-    st.caption(manager_plan["rationale"])
-    with st.expander("Why this workflow was selected", expanded=False):
+    with st.expander("Routing audit", expanded=False):
+        st.metric("Selected workflow", manager_plan["selected_action"])
+        st.metric("Confidence", f"{int(manager_plan['confidence'] * 100)}%")
+        st.caption(manager_plan["rationale"])
         st.caption(f"Routing mode: {manager_plan.get('routing_mode', 'rule-based')}")
         st.dataframe(manager_plan["agents"], use_container_width=True)
         st.dataframe(manager_plan["tools"], use_container_width=True)
         st.json(manager_plan["evidence_state"])
     action = manager_plan["selected_action"]
-    st.caption(f"Running: {action}")
 
 if action == "Chat":
     if not corpus and not use_tavily:

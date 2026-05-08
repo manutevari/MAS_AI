@@ -11,6 +11,7 @@ Core capabilities:
 - evidence-grounded chat over files, permitted URLs, Tavily live evidence, or vector stores
 - TF-IDF, OpenAI embeddings, and optional Pinecone retrieval
 - PDF, text, spreadsheet, image/OCR, ZIP, and web evidence ingestion
+- automatic LLM-assisted transliteration for non-Latin query/OCR/evidence text when an approved provider is active
 - strict anti-hallucination guardrails with citations and missing-evidence handling
 - NotebookLM-style, Physics Wallah-style, and textbook-style quizzes, flashcards, solutions, and question papers from uploaded sources
 - school clerk automation for result sheets, attendance, fee reminders, certificates, roll lists, notices, and parent communication drafts
@@ -188,19 +189,19 @@ SUPABASE_METADATA_TABLE = "rag_metadata"
 The interface is intentionally one-screen:
 
 - sidebar: files, URLs, models, OCR/STT, privacy, and human approval
-- main screen: one smart workflow selector, one brief/query box, one `Run` button
+- main screen: one brief/query box and one `Run` button; tools stay hidden unless advanced manual override is opened
 - output area: review result, approve, download
 
-Workflows include Smart auto, Chat, Agent chat, Ask suggestions, Vector knowledge, Live search, AI policy scan, School clerk, Study quiz, Website, App blueprint, Codex workflow, Template, Voiceover, Marketing, Media inventory, Mindmap, Visual maps, Integrations, Swarm, Toolbox, Compliance, and Metadata.
+The default UI is query-first. The app chooses the workflow internally. Advanced manual override can expose Chat, Agent chat, Ask suggestions, Vector knowledge, Live search, AI policy scan, School clerk, Study quiz, Website, App blueprint, Codex workflow, Template, Voiceover, Marketing, Media inventory, Mindmap, Visual maps, Integrations, Swarm, Toolbox, Compliance, and Metadata.
 
 ## Smart Auto Routing
 
-`Smart auto` keeps the orchestration manager inside the pipeline instead of exposing it as a visible tool:
+Smart routing keeps the orchestration manager inside the pipeline instead of exposing it as a visible tool:
 
 - accepts text, mic transcription, uploaded documents, ZIP/PDF/image/spreadsheet evidence, and permitted URL/live evidence
 - selects the smallest useful workflow such as Chat, Agent chat, School clerk, Study quiz, Website, Visual maps, Marketing, WhatsApp automation, Compliance, or Live search
 - uses the selected LLM as an internal router when a local/approved provider is available, otherwise falls back to deterministic rules
-- can show compact routing details without making the manager a user-facing action
+- can show compact routing details only inside the collapsed routing audit
 - keeps human review above the orchestrator and all agents
 
 ## School Clerk Automation
@@ -408,14 +409,7 @@ Only Tesseract is kept as a standard lightweight dependency in this deploy packa
 
 ## Transliteration
 
-The transliteration dropdown includes:
-
-- No transliteration
-- Indic transliteration rules
-- Bhashini/Indic transliteration
-- LLM-assisted transliteration
-
-The grounding guard still applies: transliterated text must be treated as OCR-derived evidence and uncertainty must be stated when the source text is unclear.
+Transliteration is hidden from the normal UI and runs automatically. The model keeps the original script, adds roman transliteration on first mention, does not translate meaning unless asked, and marks uncertain OCR/transliteration as approximate. If cloud processing is not approved or no LLM key/local provider is available, the app preserves original script and states that automatic LLM transliteration was not performed. The grounding guard still applies: transliterated text must be treated as OCR-derived evidence and uncertainty must be stated when the source text is unclear.
 
 ## Speech To Text
 
