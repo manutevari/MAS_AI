@@ -213,8 +213,12 @@ The default UI is query-first. The app chooses the workflow internally. Advanced
 The project incorporates the uploaded architecture diagram as a reusable workflow:
 
 - offline document indexing path: load files, chunk text, create embeddings/vector records, and keep source metadata
+- retrieve-only RAG service contract: `retrieve_context(query, top_k, max_chars)` returns retrieved docs and a source-block context without calling an LLM
+- optional MiniLM semantic retriever uses `sentence-transformers/paraphrase-MiniLM-L6-v2` with TF-IDF fallback
 - structured output schemas: `RAGDecision`, `ProductAgentResponse`, `CustomerInfo`, `EMIInput`, and `LeadPayload`
+- explicit `RAGAnswer` packets preserve answer text, citations, limitations, confidence, and grounded status
 - shared state: product workspaces for personal loan, two-wheeler loan, and generic relationship-manager tasks
+- module map/audit trail mirrors the diagram layers: indexing, schemas, shared state, graph orchestration, RAG, EMI, lead service, and product agents
 - relationship manager layer: classifies generic, product-information, EMI, lead/application, and unclear queries
 - RAG retrieval service: product-information queries retrieve uploaded product evidence and generate grounded answers
 - product agents: selected by product, then route to collect customer info, calculate EMI, or create a draft lead

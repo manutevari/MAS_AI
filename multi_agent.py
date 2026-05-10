@@ -1797,6 +1797,71 @@ def retrieve(corpus: List[Dict[str, Any]], query: str, k: int = 8) -> List[Dict[
         return sorted(scored, key=lambda x: x["score"], reverse=True)[:k]
 
 
+def sentence_transformer_retrieve(
+    corpus: List[Dict[str, Any]],
+    query: str,
+    k: int = 5,
+    model_name: str = "paraphrase-MiniLM-L6-v2",
+    force: bool = False,
+) -> List[Dict[str, Any]]:
+    """MiniLM semantic retrieval with TF-IDF fallback."""
+
+    if not corpus:
+        return []
+    if not force and os.getenv("ENABLE_MINILM_RETRIEVER", "false").lower() != "true":
+        return retrieve(corpus, query, k)
+    try:
+        import numpy as np
+        from sentence_transformers import SentenceTransformer
+
+        model = SentenceTransformer(os.getenv("MINILM_EMBEDDING_MODEL", model_name))
+        texts = [str(c.get("text", "")) for c in corpus]
+        vectors = model.encode(texts, normalize_embeddings=True)
+        qvec = model.encode([query], normalize_embeddings=True)[0]
+        scores = np.asarray(vectors) @ np.asarray(qvec)
+        order = np.argsort(scores)[::-1][:k]
+        return [dict(corpus[int(i)], score=float(scores[int(i)])) for i in order]
+    except Exception:
+        return retrieve(corpus, query, k)
+
+
+def build_source_context(results: List[Dict[str, Any]], max_chars: int = 1200) -> str:
+    """Build compact source blocks for retrieve-only RAG service contracts."""
+
+    parts = []
+    total = 0
+    for idx, doc in enumerate(results, start=1):
+        block = (
+            f"Source {idx}\n"
+            f"File: {doc.get('source', '')}\n"
+            f"Page: {doc.get('page', 1)}\n"
+            f"Section: {doc.get('section', 'Document')}\n"
+            f"Score: {float(doc.get('score', 0.0)):.4f}\n"
+            "Content:\n"
+            f"{doc.get('text', '')}"
+        ).strip()
+        remaining = max_chars - total
+        if remaining <= 0:
+            break
+        if len(block) > remaining:
+            block = block[:remaining]
+        parts.append(block)
+        total += len(block)
+    return "\n\n---\n\n".join(parts)
+
+
+def retrieve_context(query_text: str, corpus: List[Dict[str, Any]], top_k: int = 5, max_chars: int = 1200) -> Dict[str, Any]:
+    """Retrieve docs and build context without calling an LLM."""
+
+    results = sentence_transformer_retrieve(corpus, query_text, top_k)
+    return {
+        "query": query_text,
+        "results": results,
+        "context": build_source_context(results, max_chars=max_chars),
+        "retriever": "sentence-transformers/paraphrase-MiniLM-L6-v2 with TF-IDF fallback",
+    }
+
+
 def ask_suggestions(corpus: List[Dict[str, Any]], n: int = 8) -> List[str]:
     """Generate simple grounded question suggestions from source sections and numeric evidence."""
 
@@ -2008,6 +2073,15 @@ class LeadPayload:
 
 
 @dataclass
+class RAGAnswer:
+    answer: str
+    citations: List[Dict[str, Any]]
+    limitations: List[str]
+    confidence: float = 0.0
+    grounded: bool = True
+
+
+@dataclass
 class ProductAgentResponse:
     agent: str
     action_type: str
@@ -2025,6 +2099,16 @@ def relationship_manager_state() -> Dict[str, Any]:
             "human_top_of_loop": True,
         },
         "structured_output_schemas": ["RAGDecision", "RAGAnswer", "ProductAgentResponse", "CustomerInfo", "EMIInput", "LeadPayload"],
+        "module_map": {
+            "offline_document_indexing": ["build_corpus_from_paths", "build_corpus_from_urls", "chunk", "retrieve", "pinecone_upsert", "save_corpus_pg"],
+            "schemas.py": ["RAGDecision", "RAGAnswer", "ProductAgentResponse", "CustomerInfo", "EMIInput", "LeadPayload"],
+            "state/schema.py": ["product_workspaces", "personal_loan", "two_wheeler_loan", "generic", "shared_state"],
+            "graph.py": ["orchestration_manager_plan", "relationship_manager_agent", "relationship_manager_mermaid"],
+            "services/rag.py": ["retrieve", "generate", "answer_eval_matrix"],
+            "services/emi.py": ["calculate_emi_details"],
+            "services/lead.py": ["draft lead payload", "human consent gate"],
+            "agents": ["relationship_manager", "personal_loan_agent", "two_wheeler_loan_agent"],
+        },
         "product_workspaces": {
             "personal_loan": {"agent": "personal_loan_agent", "actions": ["collect_customer_info", "calculate_emi", "create_lead", "product_rag"]},
             "two_wheeler_loan": {"agent": "two_wheeler_loan_agent", "actions": ["collect_customer_info", "calculate_emi", "create_lead", "product_rag"]},
@@ -2037,6 +2121,9 @@ def relationship_manager_mermaid() -> str:
     return "\n".join(
         [
             "flowchart LR",
+            '  SC["Structured Output Schemas\\nRAGDecision + RAGAnswer + ProductAgentResponse\\nCustomerInfo + EMIInput + LeadPayload"] --> RM',
+            '  ST["Shared State\\nproduct_workspaces + current_query + final_response"] --> RM',
+            '  LG["LangGraph-style Orchestrator\\ngraph.py + relationship_manager.py"] --> RM',
             '  Q["User Query"] --> RM{"Relationship Manager\\nIntent Classification"}',
             '  IDX["Offline Document Indexing\\nload -> chunk -> embed -> vector upsert"] --> RAG["RAG Retrieval Service"]',
             '  RM -->|Generic Query| G["Generic Response"]',
@@ -2188,10 +2275,12 @@ def relationship_manager_agent(query: str, corpus: List[Dict[str, Any]], provide
     state = relationship_manager_state()
     product = decision.product
     selected_agent = state["product_workspaces"].get(product, state["product_workspaces"]["generic"])["agent"]
-    hits = retrieve(corpus, query or product, 8) if corpus else []
+    retrieval_packet = retrieve_context(query or product, corpus, top_k=8, max_chars=1400) if corpus else {"query": query, "results": [], "context": "", "retriever": "none"}
+    hits = retrieval_packet["results"]
     answer = ""
     emi_details: Dict[str, Any] | None = None
     lead: Dict[str, Any] | None = None
+    rag_answer = RAGAnswer(answer="", citations=[], limitations=[], confidence=decision.confidence, grounded=bool(hits) or decision.route != "rag_flow")
 
     if decision.route == "ask_clarification":
         answer = "Please clarify the product and task. Example: ask product information, calculate EMI with amount/rate/tenure, or create a lead with consent."
@@ -2220,8 +2309,25 @@ def relationship_manager_agent(query: str, corpus: List[Dict[str, Any]], provide
             rag = generate(query, hits, external=False)
             answer = rag["answer"]
             provider = rag.get("provider", provider)
+            rag_answer = RAGAnswer(
+                answer=answer,
+                citations=[
+                    {
+                        "source": h.get("source"),
+                        "page": h.get("page"),
+                        "section": h.get("section"),
+                        "kind": h.get("kind"),
+                        "score": round(float(h.get("score", 0.0)), 4),
+                    }
+                    for h in hits[:8]
+                ],
+                limitations=["Use only uploaded product evidence.", "Human review required before financial or customer-contact use."],
+                confidence=decision.confidence,
+                grounded=True,
+            )
         else:
             answer = "No product evidence is indexed yet. Upload policy/product documents or permitted URLs first."
+            rag_answer = RAGAnswer(answer=answer, citations=[], limitations=["No indexed product evidence."], confidence=0.0, grounded=False)
     else:
         answer = "I can help with product information, EMI calculation, application lead capture, or clarification. Upload evidence for grounded product answers."
 
@@ -2236,6 +2342,8 @@ def relationship_manager_agent(query: str, corpus: List[Dict[str, Any]], provide
     return {
         "decision": asdict(decision),
         "state": state,
+        "retrieval_packet": retrieval_packet,
+        "rag_answer": asdict(rag_answer),
         "product_agent_response": asdict(response),
         "answer": answer,
         "sources": hits,
@@ -3789,7 +3897,12 @@ async def answer_rag_chat(
 ) -> Dict[str, Any]:
     if provider:
         os.environ["LLM_PROVIDER"] = provider
-    hits = embedding_retrieve(corpus, question, top_k) if retrieval_engine == "openai_embeddings" else retrieve(corpus, question, top_k)
+    if retrieval_engine == "openai_embeddings":
+        hits = embedding_retrieve(corpus, question, top_k)
+    elif retrieval_engine == "minilm":
+        hits = sentence_transformer_retrieve(corpus, question, top_k)
+    else:
+        hits = retrieve(corpus, question, top_k)
     ans = generate(question, hits, allow_external_knowledge, history)
     return {"answer": ans["answer"], "sources": hits, "latency_s": 0.0, "langchain_document_count": len(hits), "eval_matrix": answer_eval_matrix(ans["answer"], hits), **ans}
 

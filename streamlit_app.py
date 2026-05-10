@@ -57,6 +57,7 @@ from multi_agent import (
     relationship_manager_agent,
     save_corpus_pg,
     school_clerk_automation,
+    sentence_transformer_retrieve,
     speech_to_text_options,
     study_quiz_generator,
     study_quiz_items,
@@ -766,7 +767,8 @@ with top_buttons[2].popover("Model", use_container_width=True):
 
 with top_buttons[3].popover("Process", use_container_width=True):
     c1, c2 = st.columns(2)
-    retrieval = c1.selectbox("Search", ["TF-IDF", "OpenAI text-embedding-3-large", "Pinecone"], index=["TF-IDF", "OpenAI text-embedding-3-large", "Pinecone"].index(defaults["retrieval"]))
+    retrieval = c1.selectbox("Search", ["TF-IDF", "MiniLM semantic", "OpenAI text-embedding-3-large", "Pinecone"], index=["TF-IDF", "MiniLM semantic", "OpenAI text-embedding-3-large", "Pinecone"].index(defaults["retrieval"]))
+    os.environ["ENABLE_MINILM_RETRIEVER"] = str(retrieval == "MiniLM semantic").lower()
     chunking = c2.selectbox("Chunking", ["section_semantic", "mbert"], index=["section_semantic", "mbert"].index(defaults["chunking"]))
     os.environ["CHUNKING_ENGINE"] = chunking
     ocr_rows = ocr_model_options()
@@ -927,7 +929,9 @@ with studio_tab:
 with evidence_tab:
     search_query = brief or "summary"
     hits = pinecone_retrieve(corpus, search_query, top_k, cid) if retrieval == "Pinecone" else (
-        embedding_retrieve(corpus, search_query, top_k) if corpus and retrieval.startswith("OpenAI") else retrieve(corpus, search_query, top_k)
+        embedding_retrieve(corpus, search_query, top_k) if corpus and retrieval.startswith("OpenAI") else (
+            sentence_transformer_retrieve(corpus, search_query, top_k) if corpus and retrieval == "MiniLM semantic" else retrieve(corpus, search_query, top_k)
+        )
     )
     st.caption(f"{len(hits)} retrieved chunks from {metadata.get('source_count', 0)} source(s).")
     st.text(format_context(hits) if hits else "No evidence yet. Upload files, add permitted URLs, or enable Tavily live search.")
@@ -1007,7 +1011,7 @@ with chat_tab:
                     corpus,
                     provider=provider,
                     top_k=top_k,
-                    retrieval_engine="openai_embeddings" if retrieval in {"OpenAI text-embedding-3-large", "Pinecone"} else "tfidf",
+                    retrieval_engine="openai_embeddings" if retrieval in {"OpenAI text-embedding-3-large", "Pinecone"} else ("minilm" if retrieval == "MiniLM semantic" else "tfidf"),
                 )
             )
         a_col, s_col = st.columns([3, 1])
