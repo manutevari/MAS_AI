@@ -80,7 +80,7 @@ from multi_agent import (
 )
 
 
-st.set_page_config(page_title="MAS Scientific RAG", layout="wide", initial_sidebar_state="collapsed")
+st.set_page_config(page_title="MAS Scientific RAG", layout="wide", initial_sidebar_state="expanded")
 
 st.markdown(
     """
@@ -90,6 +90,9 @@ html, body, [class*="css"], .stMarkdown, .stTextArea, .stSelectbox, .stTextInput
     font-family: Inter, "Noto Sans Devanagari", "Nirmala UI", "Mangal", system-ui, sans-serif;
 }
 .block-container { max-width: 1440px; padding: .55rem .85rem .15rem .85rem; }
+#MainMenu, footer, header[data-testid="stHeader"], [data-testid="stToolbar"], [data-testid="stDecoration"] {
+    display: none !important;
+}
 [data-testid="stSidebar"] { background: #f8fafc; border-right: 1px solid #e5e7eb; }
 [data-testid="stSidebar"] .block-container { padding: .75rem .7rem; }
 div[data-testid="stVerticalBlock"] { gap: .32rem; }
@@ -125,8 +128,10 @@ div.stButton > button, div.stDownloadButton > button {
 }
 div.stDownloadButton > button { background: #111827; color: #fff; }
 div[data-testid="stMetric"] { background: #fff; border: 1px solid #e5e7eb; border-radius: 9px; padding: 8px; }
-[data-testid="stSidebar"] { display: none; }
-.block-container { padding-left: 4.35rem; padding-right: 1.2rem; }
+[data-testid="stSidebar"] { background: #050506; border-right: 1px solid #202124; display: block; }
+[data-testid="stSidebar"] * { color: #d0d5dd; }
+[data-testid="stSidebar"] .block-container { padding: 1.15rem .9rem; }
+.block-container { padding-left: 1.2rem; padding-right: 1.2rem; }
 .fake-rail {
     position: fixed; z-index: 9999; inset: 0 auto 0 0; width: 46px; background: #fff;
     border-right: 1px solid #ececf1; display: flex; flex-direction: column; align-items: center;
@@ -144,7 +149,7 @@ div[data-testid="stMetric"] { background: #fff; border: 1px solid #e5e7eb; borde
 .brand-select { font-weight: 600; font-size: 1rem; }
 .top-actions { display: flex; gap: .35rem; justify-content: flex-end; align-items: center; }
 .landing {
-    min-height: 42vh; display: flex; flex-direction: column; align-items: center; justify-content: center;
+    min-height: 24vh; display: flex; flex-direction: column; align-items: center; justify-content: flex-end;
     text-align: center; padding-top: 4vh;
 }
 .landing h1 { font-size: 1.45rem; font-weight: 500; margin-bottom: 1.6rem; }
@@ -159,6 +164,32 @@ div[data-testid="stMetric"] { background: #fff; border: 1px solid #e5e7eb; borde
     box-shadow: 0 8px 24px rgba(15, 23, 42, .035);
 }
 .stPopover button { border-radius: 999px !important; }
+.stApp { background: #050506; color: #d0d5dd; }
+.main .block-container { background: #050506; }
+h1, h2, h3, h4, p, li, label, span, .stMarkdown { color: #d0d5dd; }
+.brand-select { color: #f2f4f7; }
+.fake-rail { display: none; }
+.topbar, .soft-panel, .askbox, [data-testid="stChatMessage"], div[data-testid="stMetric"] {
+    background: #141414; border-color: #27272a; box-shadow: none;
+}
+.landing h1 { color: #b8c0cc; font-size: 1.55rem; }
+textarea, input { background: #151515 !important; color: #f2f4f7 !important; border-color: #303036 !important; }
+.chip { background: #141414; border-color: #303036; color: #d0d5dd; }
+.ok { background: #102319; border-color: #236c43; }
+.warn { background: #2a210d; border-color: #8a641c; }
+.bad { background: #2a1212; border-color: #7a2f2f; }
+div.stButton > button, div.stDownloadButton > button {
+    background: #171717; border: 1px solid #303036; color: #f2f4f7;
+}
+div.stButton > button:hover, div.stDownloadButton > button:hover {
+    border-color: #6b7280; color: #ffffff;
+}
+div.stButton > button[kind="primary"] { background: #2f3136; color: #fff; }
+.assistant-card {
+    border: 1px solid #26272b; border-radius: 16px; background: #121212; padding: 14px;
+}
+.sidebar-brand { font-size: 1.35rem; font-weight: 800; color: #f2f4f7; margin-bottom: 1.1rem; }
+.sidebar-muted { color: #8b949e; font-size: .78rem; }
 </style>
 """,
     unsafe_allow_html=True,
@@ -663,12 +694,91 @@ def status_chips(meta: Dict[str, Any]) -> None:
     st.markdown("".join(f'<span class="chip {style}">{text}</span>' for style, text in chips), unsafe_allow_html=True)
 
 
+def queue_prompt(prompt: str, action: str = "Chat", auto_run: bool = False) -> None:
+    st.session_state["pending_brief_text"] = prompt
+    st.session_state["forced_action"] = action
+    st.session_state["pending_auto_run"] = auto_run
+
+
+def remember_chat(question: str, answer: str, action: str) -> None:
+    if not question and not answer:
+        return
+    history = st.session_state.setdefault("assistant_history", [])
+    history.insert(0, {"question": question[:240], "answer": answer[:420], "action": action})
+    del history[12:]
+
+
+def new_chat() -> None:
+    for key in ("brief_text", "pending_brief_text", "pending_auto_run", "forced_action", "live_exam"):
+        st.session_state.pop(key, None)
+    st.session_state["brief_text"] = ""
+
+
 load_secret_env()
 
 if st.session_state.get("pending_brief_text"):
     st.session_state["brief_text"] = st.session_state.pop("pending_brief_text")
 if "brief_text" not in st.session_state:
     st.session_state["brief_text"] = ""
+if "assistant_history" not in st.session_state:
+    st.session_state["assistant_history"] = []
+
+with st.sidebar:
+    st.markdown('<div class="sidebar-brand">MAS AI</div>', unsafe_allow_html=True)
+    if st.button("Chat", use_container_width=True):
+        st.session_state["forced_action"] = "Chat"
+    if st.button("Prompts", use_container_width=True):
+        st.session_state["show_prompt_library"] = not st.session_state.get("show_prompt_library", False)
+    if st.button("AI Specialists", use_container_width=True):
+        st.session_state["show_agent_library"] = not st.session_state.get("show_agent_library", False)
+    if st.session_state.get("show_prompt_library", False):
+        st.caption("Prompt library")
+        prompt_bank = [
+            ("Summarize document", "Summarize the uploaded document with citations and limitations.", "Chat"),
+            ("Summarize webpage", "Summarize the permitted webpage URL with citations.", "Chat"),
+            ("Quiz from evidence", "Create a source-grounded quiz with answers and remarks.", "Study quiz"),
+            ("Website copy", "Build a website page with SEO, critic review, and source evidence.", "Website"),
+            ("Mindmap", "Create a mindmap and flowchart from the uploaded evidence.", "Mindmap"),
+            ("Marketing post", "Create a compliant LinkedIn and X post grounded in the uploaded evidence.", "Marketing"),
+        ]
+        for label, prompt, action_name in prompt_bank:
+            if st.button(label, key=f"side_prompt_{safe_key(label)}", use_container_width=True):
+                queue_prompt(prompt, action_name)
+                st.rerun()
+    if st.session_state.get("show_agent_library", False):
+        st.caption("Specialists")
+        specialists = [
+            ("Research RAG", "Agent chat"),
+            ("Relationship manager", "Relationship manager"),
+            ("School clerk", "School clerk"),
+            ("Website builder", "Website"),
+            ("Marketing", "Marketing"),
+            ("Compliance", "Compliance"),
+            ("Visual maps", "Visual maps"),
+            ("Toolbox", "Toolbox"),
+        ]
+        for label, action_name in specialists:
+            if st.button(label, key=f"side_agent_{safe_key(label)}", use_container_width=True):
+                queue_prompt(st.session_state.get("brief_text", "") or f"Run {label.lower()} for my current task.", action_name)
+                st.rerun()
+    st.divider()
+    if st.button("New Chat", use_container_width=True):
+        new_chat()
+        st.rerun()
+    if st.button("History", use_container_width=True):
+        st.session_state["show_history"] = not st.session_state.get("show_history", False)
+    if st.session_state.get("show_history", False):
+        st.caption("Recent outputs")
+        if not st.session_state["assistant_history"]:
+            st.markdown('<div class="sidebar-muted">No history yet.</div>', unsafe_allow_html=True)
+        for i, item in enumerate(st.session_state["assistant_history"][:6], start=1):
+            with st.expander(f"{i}. {item['action']}"):
+                st.caption(item["question"] or "No question")
+                st.write(item["answer"] or "No answer")
+    st.divider()
+    st.button("Subscribe", disabled=True, use_container_width=True)
+    st.button("Settings", disabled=True, use_container_width=True)
+    st.markdown('<div class="sidebar-muted">Human-in-loop scientific RAG workspace</div>', unsafe_allow_html=True)
 
 st.markdown(
     """
@@ -683,9 +793,13 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-header_left, header_right = st.columns([3, 7], vertical_alignment="center")
+header_left, header_center, header_right = st.columns([2, 3, 5], vertical_alignment="center")
 with header_left:
     st.markdown('<div class="brand-select">MAS AI</div>', unsafe_allow_html=True)
+with header_center:
+    if st.button("New Chat", use_container_width=True):
+        new_chat()
+        st.rerun()
 with header_right:
     top_buttons = st.columns([1, 1, 1, 1, 1], gap="small")
 
@@ -699,8 +813,9 @@ jurisdiction = "India"
 fetch_ok = False
 use_tavily = False
 extra_models = ""
-manual = False
-manual_action = "Chat"
+forced_action = st.session_state.get("forced_action", "")
+manual = bool(forced_action)
+manual_action = forced_action if forced_action in WORKFLOWS else "Chat"
 response_language = "Auto"
 auto_mic_run = True
 voice_reply = False
@@ -732,8 +847,12 @@ with top_buttons[0].popover("Files", use_container_width=True):
     st.caption("Tavily key is read from Streamlit secrets only; no key field is shown.")
 
 with top_buttons[1].popover("Tools", use_container_width=True):
-    manual = st.toggle("Manual node selection", value=False)
-    manual_action = st.selectbox("Node / function", WORKFLOWS, disabled=not manual)
+    manual = st.toggle("Manual node selection", value=manual)
+    manual_action = st.selectbox("Node / function", WORKFLOWS, index=WORKFLOWS.index(manual_action), disabled=not manual)
+    if manual:
+        st.session_state["forced_action"] = manual_action
+    elif st.session_state.get("forced_action"):
+        st.session_state.pop("forced_action", None)
     st.caption("When manual mode is off, the orchestration manager selects the node from the query, files, mic, URL, and live-search state.")
     with st.expander("Accessible node map", expanded=False):
         st.markdown("\n".join(f"- {node}" for node in WORKFLOWS))
@@ -745,6 +864,13 @@ with top_buttons[2].popover("Model", use_container_width=True):
     paid = [m for m in models if m.get("requires_key") != "no"]
     model_group = st.radio("Group", ["Free / no key", "Paid / key required"], horizontal=True)
     choices = free if model_group.startswith("Free") else paid
+    model_search = st.text_input("Search models", placeholder="Search")
+    if model_search:
+        choices = [m for m in choices if model_search.lower() in m["label"].lower() or model_search.lower() in m.get("provider", "").lower()]
+    st.caption("Basic Models" if model_group.startswith("Free") else "Advanced / key-required models")
+    if not choices:
+        st.warning("No model matches the search.")
+        choices = free or models[:1]
     selected = st.selectbox("Model", [m["label"] for m in choices])
     selected_model = choices[[m["label"] for m in choices].index(selected)]
     provider = apply_provider(selected_model)
@@ -841,7 +967,20 @@ st.markdown("</div>", unsafe_allow_html=True)
 chat_tab, evidence_tab, studio_tab = st.tabs(["Chat", "Evidence", "Studio"])
 
 with chat_tab:
-    st.markdown('<div class="landing"><h1>What is on the agenda today?</h1></div>', unsafe_allow_html=True)
+    st.markdown('<div class="landing"><h1>How can I help you today?</h1></div>', unsafe_allow_html=True)
+    quick_cols = st.columns(6)
+    quick_actions = [
+        ("Summarize Webpage", "Summarize the permitted webpage URL with citations.", "Chat"),
+        ("Summarize Document", "Summarize the uploaded document with citations, key findings, and limitations.", "Chat"),
+        ("Chat with Webpage", "Answer my question using only the permitted webpage URL evidence.", "Chat"),
+        ("LinkedIn Post", "Create a LinkedIn post grounded only in uploaded or permitted evidence.", "Marketing"),
+        ("X Post", "Create a concise X post thread grounded only in uploaded or permitted evidence.", "Marketing"),
+        ("View All Agents", "Show all available agents and tools.", "Toolbox"),
+    ]
+    for idx, (label, prompt, action_name) in enumerate(quick_actions):
+        if quick_cols[idx].button(label, key=f"quick_{safe_key(label)}", use_container_width=True):
+            queue_prompt(prompt, action_name)
+            st.rerun()
     prompt_cols = st.columns([.55, 8, .75, .75], vertical_alignment="center")
     with prompt_cols[0].popover("+", use_container_width=True):
         st.caption("Attach evidence without opening the setup drawer.")
@@ -870,7 +1009,7 @@ with chat_tab:
         brief = st.text_area(
             "Brief / query",
             height=68 if density != "Ultra" else 48,
-            placeholder="Ask anything",
+            placeholder="Tell me something about this page" if urls.strip() else "Ask anything",
             key="brief_text",
             label_visibility="collapsed",
         )
@@ -911,7 +1050,8 @@ with chat_tab:
     for i, suggestion in enumerate(ask_suggestions(corpus, 4)):
         label = suggestion.split("?")[0].strip()[:30] or f"Suggestion {i + 1}"
         if suggestion_cols[i].button(label, key=f"suggestion_{i}", help=suggestion):
-            brief = suggestion
+            queue_prompt(suggestion, "Chat")
+            st.rerun()
     st.markdown("</div>", unsafe_allow_html=True)
 
 with studio_tab:
@@ -1027,6 +1167,7 @@ with chat_tab:
             download("answer", json.dumps(result, indent=2), "answer.json", "application/json")
         log_query_pg(cid, brief, result["answer"], result.get("provider", ""), result.get("model", ""))
         log_rag_event(brief, result["answer"], result.get("provider", ""), result.get("model", ""), result.get("latency_s", 0.0), result.get("sources", []), retrieval)
+        remember_chat(brief, result["answer"], "Chat")
         f1, f2 = st.columns(2)
         if f1.button("Good answer", key="feedback_chat_up"):
             log_feedback(brief, result["answer"], "up", provider=result.get("provider", ""), retrieval_mode=retrieval)
@@ -1049,6 +1190,7 @@ with chat_tab:
                 st.json(result.get("conversation", []))
             download("agent answer", json.dumps(result, indent=2), "agent_answer.json", "application/json")
         log_rag_event(brief, result["answer"], result.get("provider", ""), result.get("model", ""), result.get("latency_s", 0.0), result.get("sources", []), retrieval)
+        remember_chat(brief, result["answer"], "Agent chat")
         f1, f2 = st.columns(2)
         if f1.button("Good agent answer", key="feedback_agent_up"):
             log_feedback(brief, result["answer"], "up", provider=result.get("provider", ""), retrieval_mode=retrieval)
@@ -1130,6 +1272,7 @@ with chat_tab:
             with st.expander("BLEU / ROUGE / METEOR", expanded=False):
                 st.dataframe(out.get("eval_matrix", []), use_container_width=True)
             download("relationship manager", json.dumps(out, indent=2), "relationship_manager.json", "application/json")
+        remember_chat(brief, out["answer"], "Relationship manager")
 
     elif action == "School clerk":
         out = school_clerk_automation(brief, corpus)

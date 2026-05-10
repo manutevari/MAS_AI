@@ -197,8 +197,11 @@ SUPABASE_METADATA_TABLE = "rag_metadata"
 
 The interface is intentionally one-screen and chat-oriented:
 
-- sidebar: files and URLs first; model, retrieval, OCR/STT, privacy, and approval controls are grouped in collapsed panels
-- main screen: compact Chat, Evidence, and Debug tabs with short prompt chips and an icon-only run button
+- dark assistant shell: Chat, Prompts, AI Specialists, New Chat, History, and profile/status controls stay available without exposing secret keys
+- top tool rail: Files, Tools, Model, Process, and Guardrails are compact popovers so advanced controls stay hidden until needed
+- model picker: searchable free/no-key and paid/key-required lists, Ollama/custom endpoint settings, and hidden secret-backed key handling
+- quick actions: Summarize Webpage, Summarize Document, Chat with Webpage, LinkedIn Post, X Post, and View All Agents route directly into the smart pipeline
+- main screen: compact Chat, Evidence, and Studio tabs with short prompt chips, mic input, file attachment, URL-aware ingestion, and a primary run button
 - output area: ChatGPT/Claude-style user and assistant messages with a right-side evidence/source column for RAG answers
 - presets: Fast, Balanced, Deep Research, and Offline configure retrieval depth and chunking defaults
 - density modes: Compact, Comfortable, and Ultra Compact adjust spacing for different screens
