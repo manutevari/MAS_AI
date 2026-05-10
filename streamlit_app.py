@@ -14,7 +14,9 @@ from typing import Any, Dict, List
 import streamlit as st
 import streamlit.components.v1 as components
 
+from monitoring import log_feedback, log_rag_event, monitoring_summary, write_evidently_report
 from multi_agent import (
+    agent_metrics_session,
     ai_policy_profiles,
     ai_policy_scan,
     answer_rag_chat,
@@ -179,6 +181,7 @@ KEYS = (
 WORKFLOWS = [
     "Chat",
     "Agent chat",
+    "Metrics",
     "Ask suggestions",
     "Vector knowledge",
     "Live search",
@@ -690,6 +693,14 @@ with chat_tab:
             render_sources(result.get("sources", []), "Retrieved")
             download("answer", json.dumps(result, indent=2), "answer.json", "application/json")
         log_query_pg(cid, brief, result["answer"], result.get("provider", ""), result.get("model", ""))
+        log_rag_event(brief, result["answer"], result.get("provider", ""), result.get("model", ""), result.get("latency_s", 0.0), result.get("sources", []), retrieval)
+        f1, f2 = st.columns(2)
+        if f1.button("Good answer", key="feedback_chat_up"):
+            log_feedback(brief, result["answer"], "up", provider=result.get("provider", ""), retrieval_mode=retrieval)
+            st.success("Feedback saved.")
+        if f2.button("Needs work", key="feedback_chat_down"):
+            log_feedback(brief, result["answer"], "down", provider=result.get("provider", ""), retrieval_mode=retrieval)
+            st.warning("Feedback saved for review.")
 
     elif action == "Agent chat":
         result = asyncio.run(answer_with_agent_pipeline_from_corpus(query, corpus, summary, provider))
@@ -701,6 +712,38 @@ with chat_tab:
             with st.expander("Agent trace"):
                 st.json(result.get("conversation", []))
             download("agent answer", json.dumps(result, indent=2), "agent_answer.json", "application/json")
+        log_rag_event(brief, result["answer"], result.get("provider", ""), result.get("model", ""), result.get("latency_s", 0.0), result.get("sources", []), retrieval)
+        f1, f2 = st.columns(2)
+        if f1.button("Good agent answer", key="feedback_agent_up"):
+            log_feedback(brief, result["answer"], "up", provider=result.get("provider", ""), retrieval_mode=retrieval)
+            st.success("Feedback saved.")
+        if f2.button("Agent needs work", key="feedback_agent_down"):
+            log_feedback(brief, result["answer"], "down", provider=result.get("provider", ""), retrieval_mode=retrieval)
+            st.warning("Feedback saved for review.")
+
+    elif action == "Metrics":
+        out = agent_metrics_session(brief, corpus, provider=provider, retrieval_engine=retrieval, jurisdiction=jurisdiction)
+        st.markdown(out["markdown"])
+        monitor = monitoring_summary()
+        c1, c2, c3, c4 = st.columns(4)
+        c1.metric("Logged answers", monitor["events"])
+        c2.metric("Feedback", monitor["feedback"])
+        c3.metric("Positive", monitor["thumbs_up"])
+        c4.metric("Avg latency", f"{monitor['avg_latency_s']}s")
+        st.markdown("### RAG Quality Metrics")
+        st.dataframe(out["metrics"], use_container_width=True)
+        st.markdown("### Quality Gates")
+        st.dataframe(out["quality_gates"], use_container_width=True)
+        st.markdown("### RAG + API Integration Plan")
+        st.markdown("\n".join(f"- {item}" for item in out["rag_api_plan"]))
+        st.markdown("### MCP Server Plan")
+        st.dataframe(out["mcp_server_plan"], use_container_width=True)
+        with st.expander("Top evidence for metrics context", expanded=False):
+            st.json(out["top_evidence"])
+        report_path = write_evidently_report()
+        if report_path.exists():
+            download("metrics report", report_path.read_text(encoding="utf-8"), "rag_metrics_report.html", "text/html")
+        download("metrics packet", json.dumps(out, indent=2), "metrics_mcp_readiness.json", "application/json")
 
     elif action == "Ask suggestions":
         out = ask_suggestions(corpus)

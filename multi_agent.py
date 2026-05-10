@@ -496,6 +496,7 @@ def toolbox_catalog() -> List[Dict[str, str]]:
         ("Swarm topology", "free/local", "streamlit", "", "hybrid/hierarchy/mesh/star/pipeline/ring/tree/blackboard/committee"),
         ("Human review", "free/local", "streamlit", "", "approval gates, metadata, audit trail"),
         ("Codex-style workflow", "free/local", "streamlit", "", "workspace-first actions, verification, review, package handoff"),
+        ("Metrics and evals", "free/local + optional paid", "monitoring/langsmith/evidently/wandb", "LANGSMITH_API_KEY/WANDB_API_KEY", "RAG quality metrics, feedback loop, API readiness, MCP planning"),
     ]
     out = []
     for feature, cost, packages, envs, note in rows:
@@ -1615,6 +1616,95 @@ def vector_space_knowledge(corpus: List[Dict[str, Any]], query: str = "entire co
     }
 
 
+def agent_metrics_session(
+    query: str,
+    corpus: List[Dict[str, Any]],
+    provider: str = "local",
+    retrieval_engine: str = "TF-IDF",
+    jurisdiction: str = "India",
+) -> Dict[str, Any]:
+    """Course-inspired metrics view for RAG, API, feedback, and MCP readiness."""
+
+    hits = retrieve(corpus, query or "metrics rag api mcp", 10)
+    source_count = len({str(c.get("source", "")) for c in corpus if c.get("source")})
+    table_chunks = sum(1 for c in corpus if c.get("kind") == "table")
+    media_chunks = sum(1 for c in corpus if str(c.get("kind", "")) in {"image", "ocr", "media"})
+    numeric_chunks = sum(1 for c in corpus if c.get("numbers"))
+    total_chars = sum(len(str(c.get("text", ""))) for c in corpus)
+    top_score = round(float(hits[0].get("score", 0.0)), 4) if hits else 0.0
+    citation_ready = bool(hits and source_count)
+    table_aware = table_chunks > 0 or any("|" in str(h.get("text", "")) for h in hits)
+    has_api_keys = any(os.getenv(k) for k in ["OPENAI_API_KEY", "OPENROUTER_API_KEY", "HF_TOKEN", "GOOGLE_API_KEY", "GROK_API_KEY", "ANTHROPIC_API_KEY"])
+    has_storage = bool(os.getenv("DATABASE_URL") or os.getenv("PINECONE_API_KEY") or os.getenv("SUPABASE_URL"))
+    metrics = [
+        {"metric": "Corpus chunks", "value": len(corpus), "target": ">= 1 for document RAG", "status": "ok" if corpus else "needs evidence"},
+        {"metric": "Unique sources", "value": source_count, "target": ">= 1 cited source", "status": "ok" if source_count else "needs sources"},
+        {"metric": "Top retrieval score", "value": top_score, "target": "higher is better", "status": "ok" if top_score > 0 else "review"},
+        {"metric": "Numeric chunks", "value": numeric_chunks, "target": "detect numerical evidence", "status": "ok" if numeric_chunks else "not found"},
+        {"metric": "Table chunks", "value": table_chunks, "target": "preserve structure", "status": "ok" if table_aware else "not found"},
+        {"metric": "Media/OCR chunks", "value": media_chunks, "target": "image/pdf evidence support", "status": "ok" if media_chunks else "optional"},
+        {"metric": "Average chunk chars", "value": round(total_chars / max(len(corpus), 1), 1), "target": "section-aware, not arbitrary 1000-char split", "status": "ok"},
+        {"metric": "API key readiness", "value": "configured" if has_api_keys else "local only", "target": "optional external LLM/API integration", "status": "ok" if has_api_keys else "local"},
+        {"metric": "Vector/storage readiness", "value": "configured" if has_storage else "local only", "target": "Postgres/Pinecone/Supabase", "status": "ok" if has_storage else "local"},
+    ]
+    gates = [
+        {"gate": "Grounding", "check": "Every model claim must cite retrieved source/page/section.", "status": "ready" if citation_ready else "blocked until evidence is uploaded"},
+        {"gate": "Tables and numbers", "check": "Preserve tables, units, denominators, totals, and numerical context.", "status": "ready" if numeric_chunks or table_aware else "watch"},
+        {"gate": "Planner -> executor -> verifier", "check": "Route complex queries through agent pipeline and verification.", "status": "ready"},
+        {"gate": "Feedback loop", "check": "Capture thumbs up/down and comments for later eval tuning.", "status": "ready through monitoring.py"},
+        {"gate": "API integration", "check": "Keep provider keys secret-backed and route calls through approved adapters.", "status": "ready" if has_api_keys else "local-only mode"},
+        {"gate": "MCP server readiness", "check": "Expose typed tools/resources after metrics prove stable behavior.", "status": "planned"},
+        {"gate": "Human authority", "check": "Human remains final approver for exports, cloud use, and external actions.", "status": "required"},
+    ]
+    api_plan = [
+        "Keep the Streamlit chat as the human-facing shell; keep orchestration inside the pipeline.",
+        "Expose one internal API boundary per capability: retrieve, answer, quiz, website, visual map, compliance, feedback.",
+        "Use provider adapters for OpenAI/OpenRouter/Hugging Face/Gemini/Grok/Ollama/custom endpoints without showing stored keys.",
+        "Log latency, source count, retrieval mode, top score, table/numeric hit counts, and user feedback.",
+        "Run LangSmith/eval datasets only when keys are configured; otherwise keep JSONL metrics local.",
+    ]
+    mcp_plan = [
+        {"tool": "retrieve_evidence", "input": "query, top_k, corpus_id", "output": "ranked chunks with citations"},
+        {"tool": "answer_grounded", "input": "query, provider, retrieval_mode", "output": "answer, citations, limitations"},
+        {"tool": "create_quiz", "input": "exam, topic, difficulty, count", "output": "items, answer key, remarks"},
+        {"tool": "build_website", "input": "brief, brand, evidence_ids", "output": "html, seo, critic notes"},
+        {"tool": "visual_map", "input": "query, style, top_k", "output": "svg, mermaid, outline"},
+        {"tool": "log_feedback", "input": "question, answer, rating, comment", "output": "stored feedback event"},
+        {"resource": "corpus_metadata", "input": "corpus_id", "output": "sources, sections, chunks, privacy metadata"},
+    ]
+    evidence = [
+        {
+            "source": h.get("source"),
+            "page": h.get("page"),
+            "section": h.get("section"),
+            "kind": h.get("kind"),
+            "score": round(float(h.get("score", 0.0)), 4),
+            "snippet": str(h.get("text", ""))[:280],
+        }
+        for h in hits[:6]
+    ]
+    markdown = (
+        "# Metrics, RAG/API, and MCP Readiness\n\n"
+        "Sameer's session insight is implemented as a practical loop: measure retrieval and answer quality first, "
+        "then integrate agents with RAG/APIs, then expose stable capabilities through an MCP server.\n\n"
+        "## Immediate Priority\n\n"
+        "1. Metrics are the operating dashboard for the whole course project.\n"
+        "2. RAG + API integration must stay grounded, secret-safe, and observable.\n"
+        "3. MCP server work should expose only stable, typed tools after feedback and eval checks.\n\n"
+        f"**Provider:** {provider}  \n"
+        f"**Retrieval:** {retrieval_engine}  \n"
+        f"**Jurisdiction:** {jurisdiction}\n"
+    )
+    return {
+        "markdown": markdown,
+        "metrics": metrics,
+        "quality_gates": gates,
+        "rag_api_plan": api_plan,
+        "mcp_server_plan": mcp_plan,
+        "top_evidence": evidence,
+    }
+
+
 def orchestration_manager_plan(
     query: str,
     corpus: List[Dict[str, Any]],
@@ -1634,6 +1724,7 @@ def orchestration_manager_plan(
     rationale = "General evidence-grounded request; use planner, retriever, executor, verifier."
 
     rules = [
+        ("Metrics", ["metrics", "metric", "eval", "evaluation", "observability", "monitoring", "feedback loop", "langsmith", "wandb", "evidently", "rag api", "rag and api", "mcp", "mcp server", "next session", "course"], "Metrics/course insight detected; inspect RAG quality, API readiness, feedback loop, and MCP server plan."),
         ("School clerk", ["school clerk", "clerk", "result", "marksheet", "mark sheet", "report card", "attendance", "fee reminder", "bonafide", "transfer certificate", "tc", "admission register", "roll list"], "School-office automation intent detected; use clerk workflow with result generation and human review."),
         ("Study quiz", ["quiz", "exam", "question paper", "mcq", "flashcard", "physics wallah", "textbook", "student"], "Study/exam intent detected; generate grounded learning items."),
         ("Visual maps", ["mindmap", "mind map", "flowchart", "flow chart", "concept map", "visual", "diagram", "graphic"], "Visual explanation requested; create evidence maps and Mermaid/SVG outputs."),

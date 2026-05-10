@@ -27,6 +27,7 @@ Core capabilities:
 - human-in-the-loop approvals, metadata exports, and swarm governance
 - hidden smart router that sends mic/text/doc/URL queries to the right agent and tool workflow
 - mic transcription can auto-route through smart workflow selection to execute the required task
+- course-inspired metrics node for RAG quality, feedback, API integration readiness, and MCP server planning
 
 Storage and search:
 
@@ -209,6 +210,17 @@ Smart routing keeps the orchestration manager inside the pipeline instead of exp
 - uses the selected LLM as an internal router when a local/approved provider is available, otherwise falls back to deterministic rules
 - can show compact routing details only inside the collapsed routing audit
 - keeps human review above the orchestrator and all agents
+
+## Metrics, RAG APIs, And MCP Readiness
+
+The `Metrics` node implements the course-session takeaway: metrics first, then RAG/API integration, then MCP server work.
+
+- tracks corpus coverage, source count, retrieval score, numerical/table evidence, API readiness, and vector/storage readiness
+- logs chat/agent events locally through `monitoring.py`
+- supports optional LangSmith, W&B, and Evidently when their packages/keys are configured
+- captures thumbs-up/down feedback for future evaluation sets
+- produces a RAG + API integration plan and an MCP server tool/resource blueprint
+- keeps MCP exposure behind stable typed tools such as `retrieve_evidence`, `answer_grounded`, `create_quiz`, `build_website`, `visual_map`, and `log_feedback`
 
 ## School Clerk Automation
 
