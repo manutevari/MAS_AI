@@ -23,7 +23,7 @@ from io import BytesIO
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 from html import escape
-from urllib.parse import urlparse
+from urllib.parse import parse_qs, urlparse
 from urllib.request import Request, urlopen
 from urllib.robotparser import RobotFileParser
 
@@ -34,7 +34,7 @@ except Exception:  # pragma: no cover
         return False
 
 
-EXTS = {".pdf", ".txt", ".md", ".csv", ".tsv", ".xlsx", ".xls", ".json", ".png", ".jpg", ".jpeg", ".webp"}
+EXTS = {".pdf", ".txt", ".md", ".csv", ".tsv", ".xlsx", ".xls", ".json", ".png", ".jpg", ".jpeg", ".webp", ".srt", ".vtt"}
 PROVIDERS = {"local", "ollama", "openai", "claude", "grok", "gemini", "huggingface", "openrouter", "custom"}
 DATABASE_URL = "DATABASE_URL"
 USER_AGENT = "ScientificRAG-CompliantFetcher/1.0"
@@ -309,6 +309,15 @@ SPEECH_TO_TEXT_MODELS = [
 
 TEXT_TO_SPEECH_MODELS = [
     {
+        "label": "Browser assistant voice - free/local",
+        "engine": "browser_speech",
+        "pricing": "free/browser",
+        "key_required": "no",
+        "languages": "browser/OS dependent",
+        "best_for": "instant assistant-style spoken answers in the app",
+        "url": "",
+    },
+    {
         "label": "Manual external TTS download - free",
         "engine": "manual_external",
         "pricing": "free",
@@ -538,6 +547,53 @@ def tts_guidance(text: str, engine: str, language: str = "Hindi/English") -> Dic
         "warning": warning,
         "note": "For external free TTS websites, paste only non-sensitive text and review voice rights, platform terms, and local law before publishing.",
     }
+
+
+def synthesize_speech(text: str, engine: str = "browser_speech", voice: str = "alloy", language: str = "") -> Dict[str, Any]:
+    """Generate spoken audio when a configured TTS backend is available."""
+
+    if not text.strip():
+        return {"ok": False, "audio": b"", "mime": "", "ext": "", "note": "No text was provided."}
+    safe_text = redact_personal_data(text)[:8000]
+    if engine == "browser_speech":
+        return {"ok": False, "audio": b"", "mime": "", "ext": "", "note": "Use the browser Speak button. No server audio file is required."}
+    if engine == "openai_tts":
+        if not os.getenv("OPENAI_API_KEY"):
+            return {"ok": False, "audio": b"", "mime": "", "ext": "", "note": "OPENAI_API_KEY is required for OpenAI TTS."}
+        try:
+            from openai import OpenAI
+
+            client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+            response = client.audio.speech.create(
+                model=os.getenv("OPENAI_TTS_MODEL", "tts-1"),
+                voice=os.getenv("OPENAI_TTS_VOICE", voice or "alloy"),
+                input=safe_text[:4000],
+                response_format="mp3",
+            )
+            audio = getattr(response, "content", None)
+            if audio is None and hasattr(response, "read"):
+                audio = response.read()
+            return {"ok": True, "audio": bytes(audio or b""), "mime": "audio/mpeg", "ext": "mp3", "note": "Generated with OpenAI TTS."}
+        except Exception as exc:
+            return {"ok": False, "audio": b"", "mime": "", "ext": "", "note": f"OpenAI TTS failed: {exc}"}
+    if engine == "edge_tts":
+        try:
+            import asyncio
+            import edge_tts
+
+            async def _run() -> bytes:
+                out = BytesIO()
+                communicate = edge_tts.Communicate(safe_text[:6000], os.getenv("EDGE_TTS_VOICE", "en-IN-NeerjaNeural"))
+                async for chunk in communicate.stream():
+                    if chunk.get("type") == "audio":
+                        out.write(chunk.get("data", b""))
+                return out.getvalue()
+
+            audio = asyncio.run(_run())
+            return {"ok": bool(audio), "audio": audio, "mime": "audio/mpeg", "ext": "mp3", "note": "Generated with Edge TTS." if audio else "Edge TTS returned no audio."}
+        except Exception as exc:
+            return {"ok": False, "audio": b"", "mime": "", "ext": "", "note": f"Edge TTS is not configured: {exc}"}
+    return {"ok": False, "audio": b"", "mime": "", "ext": "", "note": f"TTS engine `{engine}` is selectable but does not generate in-app audio yet. Use its linked external/local tool."}
 
 
 def whatsapp_toolkit(message: str, service_url: str = "", audience: str = "opted-in users") -> Dict[str, Any]:
@@ -949,6 +1005,26 @@ def _image(raw: bytes, name: str) -> str:
         return f"Image extraction failed for {name}: {exc}"
 
 
+def _subtitle(raw: bytes, name: str) -> str:
+    text = _decode(raw).replace("\ufeff", "")
+    blocks = re.split(r"\n\s*\n", text.replace("\r\n", "\n"))
+    rows = []
+    for block in blocks:
+        lines = [line.strip() for line in block.splitlines() if line.strip()]
+        if not lines or lines[0].upper().startswith(("WEBVTT", "NOTE")):
+            continue
+        if lines[0].isdigit():
+            lines = lines[1:]
+        stamp = ""
+        if lines and "-->" in lines[0]:
+            stamp = lines[0].split("-->", 1)[0].strip()
+            lines = lines[1:]
+        clean = " ".join(re.sub(r"<[^>]+>", "", line) for line in lines).strip()
+        if clean:
+            rows.append(f"[{stamp or '00:00:00'}] {clean}")
+    return f"Subtitle transcript from {name}\n" + "\n".join(rows) if rows else text
+
+
 def _text(raw: bytes, name: str, max_pages: int) -> List[Tuple[int, str, str]]:
     ext = Path(name).suffix.lower()
     if ext == ".pdf":
@@ -957,6 +1033,8 @@ def _text(raw: bytes, name: str, max_pages: int) -> List[Tuple[int, str, str]]:
         return [(1, _table(raw, name), "table")]
     if ext in {".png", ".jpg", ".jpeg", ".webp"}:
         return [(1, _image(raw, name), "image")]
+    if ext in {".srt", ".vtt"}:
+        return [(1, _subtitle(raw, name), "transcript")]
     if ext == ".json":
         try:
             return [(1, json.dumps(json.loads(_decode(raw)), indent=2), "text")]
@@ -1085,6 +1163,143 @@ def build_corpus_from_paths(paths: List[Path], max_docs: int = 40, max_pages: in
     return rows, f"Indexed {len(rows)} chunks from {len(paths)} upload(s). " + " ".join(notes)
 
 
+URL_RE = re.compile(r"https?://[^\s<>'\"`{}|\\^]+", re.IGNORECASE)
+
+
+def extract_urls_from_text(text: str) -> List[str]:
+    """Find valid HTTP(S) URLs in free text without preserving trailing punctuation."""
+
+    urls: List[str] = []
+    seen = set()
+    for match in URL_RE.finditer(text or ""):
+        url = match.group(0).strip().rstrip(".,;:!?)]}>\"'")
+        parsed = urlparse(url)
+        if parsed.scheme in {"http", "https"} and parsed.netloc and url not in seen:
+            seen.add(url)
+            urls.append(url)
+    return urls
+
+
+def extract_urls_from_paths(paths: List[Path], max_docs: int = 40, max_pages: int = 20, max_urls: int = 50) -> List[str]:
+    """Extract URLs from uploaded files, including ZIP members and OCR/table text."""
+
+    urls: List[str] = []
+    seen = set()
+    for path in paths:
+        try:
+            for name, raw in _members(path)[:max_docs]:
+                for _, text, _ in _text(raw, name, max_pages):
+                    for url in extract_urls_from_text(text):
+                        if url in seen:
+                            continue
+                        seen.add(url)
+                        urls.append(url)
+                        if len(urls) >= max_urls:
+                            return urls
+        except Exception:
+            continue
+    return urls
+
+
+def youtube_video_id(url: str) -> Optional[str]:
+    parsed = urlparse(url.strip())
+    host = parsed.netloc.lower().removeprefix("www.")
+    if host == "youtu.be":
+        return parsed.path.strip("/").split("/")[0] or None
+    if host.endswith("youtube.com") or host.endswith("youtube-nocookie.com"):
+        qs_id = parse_qs(parsed.query).get("v", [""])[0]
+        if qs_id:
+            return qs_id
+        parts = [p for p in parsed.path.split("/") if p]
+        if len(parts) >= 2 and parts[0] in {"embed", "shorts", "live"}:
+            return parts[1]
+    return None
+
+
+def _stamp(seconds: float) -> str:
+    total = max(0, int(seconds))
+    h, rem = divmod(total, 3600)
+    m, s = divmod(rem, 60)
+    return f"{h:02d}:{m:02d}:{s:02d}" if h else f"{m:02d}:{s:02d}"
+
+
+def _transcript_token_count(text: str) -> int:
+    if os.getenv("TRANSCRIPT_USE_BERT_TOKENIZER", "false").lower() == "true":
+        try:
+            from transformers import BertTokenizer
+
+            tokenizer = BertTokenizer.from_pretrained(os.getenv("TRANSCRIPT_TOKENIZER", "bert-base-uncased"))
+            return len(tokenizer.encode(text, add_special_tokens=False))
+        except Exception:
+            pass
+    return len(re.findall(r"\w+|[^\w\s]", text or ""))
+
+
+def fetch_youtube_transcript(url: str) -> Dict[str, Any]:
+    video_id = youtube_video_id(url)
+    if not video_id:
+        return {"ok": False, "url": url, "video_id": "", "segments": [], "note": "Not a supported YouTube URL."}
+    try:
+        from youtube_transcript_api import YouTubeTranscriptApi
+
+        languages = [x.strip() for x in os.getenv("YOUTUBE_TRANSCRIPT_LANGS", "en,hi,ur").split(",") if x.strip()]
+        try:
+            raw_segments = YouTubeTranscriptApi.get_transcript(video_id, languages=languages)
+        except AttributeError:
+            raw_segments = YouTubeTranscriptApi().fetch(video_id, languages=languages)
+        segments = []
+        for item in raw_segments:
+            if isinstance(item, dict):
+                text_value = item.get("text", "")
+                start_value = item.get("start", 0.0)
+                duration_value = item.get("duration", 0.0)
+            else:
+                text_value = getattr(item, "text", "")
+                start_value = getattr(item, "start", 0.0)
+                duration_value = getattr(item, "duration", 0.0)
+            if text_value:
+                segments.append({"text": re.sub(r"\s+", " ", str(text_value)).strip(), "start": float(start_value or 0), "duration": float(duration_value or 0)})
+        if not segments:
+            return {"ok": False, "url": url, "video_id": video_id, "segments": [], "note": "No public transcript segments were found."}
+        return {"ok": True, "url": url, "video_id": video_id, "segments": segments, "note": f"Fetched {len(segments)} public YouTube transcript segments."}
+    except Exception as exc:
+        return {"ok": False, "url": url, "video_id": video_id, "segments": [], "note": f"YouTube transcript unavailable: {exc}"}
+
+
+def youtube_transcript_chunks(url: str, segments: List[Dict[str, Any]], max_tokens: int = 512) -> List[Dict[str, Any]]:
+    video_id = youtube_video_id(url) or "youtube"
+    chunks: List[Dict[str, Any]] = []
+    buf: List[str] = []
+    tokens = 0
+    start = 0.0
+
+    def flush() -> None:
+        nonlocal buf, tokens, start
+        if not buf:
+            return
+        seconds = int(start)
+        watch = f"https://www.youtube.com/watch?v={video_id}&t={seconds}s"
+        text = f"Timestamp: {_stamp(start)} ({seconds}s)\nWatch: {watch}\nTranscript:\n" + " ".join(buf)
+        chunk = Chunk(f"YouTube transcript {video_id}", text, max(1, seconds), f"Transcript {_stamp(start)}", "transcript")
+        row = asdict(chunk) | {"numbers": chunk.numbers, "video_id": video_id, "start_time": start, "url": watch}
+        chunks.append(row)
+        buf, tokens, start = [], 0, 0.0
+
+    for segment in segments:
+        sentence = str(segment.get("text", "")).strip()
+        if not sentence:
+            continue
+        count = max(1, _transcript_token_count(sentence))
+        if buf and tokens + count > max_tokens:
+            flush()
+        if not buf:
+            start = float(segment.get("start", 0.0) or 0.0)
+        buf.append(sentence)
+        tokens += count
+    flush()
+    return chunks
+
+
 def jurisdiction_policy(jurisdiction: str) -> Dict[str, Any]:
     policies = {
         "India": ["DPDP controls", "lawful purpose/consent", "privacy notice", "security safeguards", "data principal rights"],
@@ -1135,12 +1350,28 @@ def fetch_url_text(url: str, jurisdiction: str = "Global/Unknown", max_bytes: in
 def build_corpus_from_urls(urls: List[str], jurisdiction: str = "Global/Unknown") -> Tuple[List[Dict[str, Any]], str]:
     rows: List[Dict[str, Any]] = []
     notes = []
-    for url in urls[:20]:
-        fetched = fetch_url_text(url.strip(), jurisdiction)
+    clean_urls: List[str] = []
+    seen = set()
+    for item in urls:
+        candidates = extract_urls_from_text(item) or [item.strip()]
+        for candidate in candidates:
+            if candidate and candidate not in seen:
+                seen.add(candidate)
+                clean_urls.append(candidate)
+    for url in clean_urls[:20]:
+        video_id = youtube_video_id(url)
+        if video_id:
+            fetched_video = fetch_youtube_transcript(url)
+            notes.append(f"{url}: {fetched_video['note']}")
+            if fetched_video["ok"]:
+                rows.extend(youtube_transcript_chunks(url, fetched_video["segments"], int(os.getenv("TRANSCRIPT_MAX_TOKENS", "512"))))
+            continue
+        fetched = fetch_url_text(url, jurisdiction)
         notes.append(f"{url}: {fetched['note']}")
         if fetched["ok"]:
             rows.extend(asdict(c) | {"numbers": c.numbers} for c in _chunk(url, 1, fetched["text"], "web"))
-    return rows, f"Indexed {len(rows)} compliant web chunks from {len(urls[:20])} URL(s)."
+    detail = " ".join(notes[:5])
+    return rows, f"Indexed {len(rows)} compliant web chunks from {len(clean_urls[:20])} URL(s)." + (f" Notes: {detail[:900]}" if detail else "")
 
 
 def tavily_search(query: str, max_results: int = 5, topic: str = "general", search_depth: str = "basic") -> Dict[str, Any]:
@@ -1290,8 +1521,10 @@ def ai_policy_scan(profile_name: str = "All", jurisdiction: str = "Global/Unknow
     }
 
 
-def corpus_id(paths: List[Path]) -> str:
-    raw = "|".join(f"{p.name}:{p.stat().st_size if p.exists() else 0}" for p in paths)
+def corpus_id(paths: List[Path], extra_sources: Optional[List[str]] = None) -> str:
+    path_bits = [f"{p.name}:{p.stat().st_size if p.exists() else 0}" for p in paths]
+    source_bits = [f"url:{src}" for src in (extra_sources or [])]
+    raw = "|".join(path_bits + source_bits)
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:16]
 
 

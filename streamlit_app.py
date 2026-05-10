@@ -3,11 +3,15 @@
 from __future__ import annotations
 
 import asyncio
+import csv
 import hashlib
 import json
 import os
 import tempfile
+import textwrap
+import zipfile
 from html import escape
+from io import BytesIO, StringIO
 from pathlib import Path
 from typing import Any, Dict, List
 
@@ -32,6 +36,8 @@ from multi_agent import (
     corpus_metadata,
     emergent_app_blueprint,
     embedding_retrieve,
+    extract_urls_from_paths,
+    extract_urls_from_text,
     format_context,
     ingest_latest_updates,
     integration_registry,
@@ -53,6 +59,7 @@ from multi_agent import (
     speech_to_text_options,
     study_quiz_generator,
     study_quiz_items,
+    synthesize_speech,
     supabase_log_metadata,
     swarm_initial_state,
     swarm_mermaid,
@@ -237,13 +244,219 @@ def safe_key(text: str) -> str:
     return hashlib.sha1(text.encode("utf-8")).hexdigest()[:10]
 
 
+def _export_text(content: str | bytes) -> str:
+    if isinstance(content, bytes):
+        return content.decode("utf-8", errors="replace")
+    return str(content)
+
+
+def _html_document(title: str, body: str) -> str:
+    return f"""<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{escape(title)}</title>
+  <style>
+    body {{ font-family: Inter, Arial, sans-serif; max-width: 920px; margin: 40px auto; padding: 0 20px; line-height: 1.58; color: #101828; }}
+    pre {{ white-space: pre-wrap; background: #f6f7f9; border: 1px solid #e5e7eb; border-radius: 10px; padding: 18px; }}
+  </style>
+</head>
+<body>
+  <h1>{escape(title)}</h1>
+  <pre>{escape(body)}</pre>
+</body>
+</html>"""
+
+
+def _csv_document(text_value: str) -> str:
+    buffer = StringIO()
+    try:
+        data = json.loads(text_value)
+    except Exception:
+        data = [{"content": line} for line in text_value.splitlines() if line.strip()] or [{"content": text_value}]
+    if isinstance(data, dict):
+        rows = [{"key": k, "value": json.dumps(v, ensure_ascii=False) if isinstance(v, (dict, list)) else v} for k, v in data.items()]
+    elif isinstance(data, list) and all(isinstance(x, dict) for x in data):
+        rows = data
+    else:
+        rows = [{"value": json.dumps(data, ensure_ascii=False)}]
+    fields = sorted({str(k) for row in rows for k in row.keys()}) or ["value"]
+    writer = csv.DictWriter(buffer, fieldnames=fields)
+    writer.writeheader()
+    for row in rows:
+        writer.writerow({k: row.get(k, "") for k in fields})
+    return buffer.getvalue()
+
+
+def _svg_image(title: str, text_value: str) -> str:
+    lines = []
+    for line in text_value.splitlines() or [text_value]:
+        lines.extend(textwrap.wrap(line, width=95) or [""])
+        if len(lines) >= 52:
+            break
+    height = 110 + max(1, len(lines)) * 24
+    text_nodes = "\n".join(
+        f'<text x="48" y="{112 + i * 24}" class="body">{escape(line)}</text>' for i, line in enumerate(lines)
+    )
+    return f"""<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="{height}" viewBox="0 0 1200 {height}">
+  <rect width="1200" height="{height}" fill="#ffffff"/>
+  <rect x="28" y="28" width="1144" height="{height - 56}" rx="18" fill="#f8fafc" stroke="#d0d5dd"/>
+  <text x="48" y="74" class="title">{escape(title)}</text>
+  {text_nodes}
+  <style>
+    .title {{ font: 700 28px Arial, sans-serif; fill: #101828; }}
+    .body {{ font: 18px Arial, sans-serif; fill: #1d2939; }}
+  </style>
+</svg>"""
+
+
+def _png_image(title: str, text_value: str) -> bytes:
+    try:
+        from PIL import Image, ImageDraw, ImageFont
+
+        font = ImageFont.load_default()
+        lines = []
+        for line in text_value.splitlines() or [text_value]:
+            lines.extend(textwrap.wrap(line, width=105) or [""])
+            if len(lines) >= 60:
+                break
+        width, height = 1400, 130 + max(1, len(lines)) * 22
+        img = Image.new("RGB", (width, height), "white")
+        draw = ImageDraw.Draw(img)
+        draw.rounded_rectangle((24, 24, width - 24, height - 24), radius=18, fill="#f8fafc", outline="#d0d5dd")
+        draw.text((48, 52), title, fill="#101828", font=font)
+        y = 100
+        for line in lines:
+            draw.text((48, y), line, fill="#1d2939", font=font)
+            y += 22
+        out = BytesIO()
+        img.save(out, format="PNG")
+        return out.getvalue()
+    except Exception:
+        return _svg_image(title, text_value).encode("utf-8")
+
+
+def _plain_pdf(title: str, text_value: str) -> bytes:
+    safe_lines = [title, ""] + [x for line in text_value.splitlines() for x in (textwrap.wrap(line, width=92) or [""])]
+    pages = [safe_lines[i:i + 44] for i in range(0, len(safe_lines), 44)] or [[title]]
+    objects: List[bytes] = [b"<< /Type /Catalog /Pages 2 0 R >>", b"", b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>"]
+    page_refs = []
+    for page in pages:
+        stream_lines = ["BT", "/F1 10 Tf", "50 770 Td", "14 TL"]
+        for line in page:
+            safe = line.encode("latin-1", errors="replace").decode("latin-1").replace("\\", "\\\\").replace("(", "\\(").replace(")", "\\)")
+            stream_lines.append(f"({safe}) Tj")
+            stream_lines.append("T*")
+        stream_lines.append("ET")
+        stream = "\n".join(stream_lines).encode("latin-1", errors="replace")
+        content_id = len(objects) + 2
+        page_obj = f"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 3 0 R >> >> /Contents {content_id} 0 R >>".encode("ascii")
+        page_refs.append(f"{len(objects) + 1} 0 R")
+        objects.append(page_obj)
+        objects.append(b"<< /Length " + str(len(stream)).encode("ascii") + b" >>\nstream\n" + stream + b"\nendstream")
+    objects[1] = f"<< /Type /Pages /Kids [{' '.join(page_refs)}] /Count {len(page_refs)} >>".encode("ascii")
+    pdf = bytearray(b"%PDF-1.4\n")
+    offsets = [0]
+    for i, obj in enumerate(objects, start=1):
+        offsets.append(len(pdf))
+        pdf.extend(f"{i} 0 obj\n".encode("ascii") + obj + b"\nendobj\n")
+    xref = len(pdf)
+    pdf.extend(f"xref\n0 {len(objects) + 1}\n0000000000 65535 f \n".encode("ascii"))
+    for off in offsets[1:]:
+        pdf.extend(f"{off:010d} 00000 n \n".encode("ascii"))
+    pdf.extend(f"trailer << /Size {len(objects) + 1} /Root 1 0 R >>\nstartxref\n{xref}\n%%EOF".encode("ascii"))
+    return bytes(pdf)
+
+
+def _pdf_document(title: str, text_value: str) -> bytes:
+    try:
+        from reportlab.lib.pagesizes import letter
+        from reportlab.pdfgen import canvas
+
+        out = BytesIO()
+        pdf = canvas.Canvas(out, pagesize=letter)
+        width, height = letter
+        y = height - 54
+        pdf.setTitle(title)
+        pdf.setFont("Helvetica-Bold", 14)
+        pdf.drawString(48, y, title[:95])
+        y -= 28
+        pdf.setFont("Helvetica", 10)
+        for line in [x for row in text_value.splitlines() for x in (textwrap.wrap(row, width=92) or [""])]:
+            if y < 54:
+                pdf.showPage()
+                y = height - 54
+                pdf.setFont("Helvetica", 10)
+            pdf.drawString(48, y, line[:140])
+            y -= 14
+        pdf.save()
+        return out.getvalue()
+    except Exception:
+        return _plain_pdf(title, text_value)
+
+
+def _zip_bundle(label: str, content: str | bytes, filename: str, mime: str) -> bytes:
+    text_value = _export_text(content)
+    stem = Path(filename).stem or "generated_output"
+    out = BytesIO()
+    with zipfile.ZipFile(out, "w", compression=zipfile.ZIP_DEFLATED) as zf:
+        original_data = content if isinstance(content, bytes) else content.encode("utf-8")
+        zf.writestr(filename or f"{stem}.txt", original_data)
+        zf.writestr(f"{stem}.txt", text_value)
+        zf.writestr(f"{stem}.md", text_value)
+        zf.writestr(f"{stem}.html", _html_document(label, text_value))
+        zf.writestr(f"{stem}.csv", _csv_document(text_value))
+        zf.writestr(f"{stem}.svg", _svg_image(label, text_value))
+        zf.writestr(f"{stem}.pdf", _pdf_document(label, text_value))
+        zf.writestr("manifest.json", json.dumps({"label": label, "original_filename": filename, "mime": mime}, indent=2))
+    return out.getvalue()
+
+
+def _export_variant(label: str, content: str | bytes, filename: str, mime: str, fmt: str) -> tuple[bytes, str, str]:
+    text_value = _export_text(content)
+    stem = Path(filename).stem or "generated_output"
+    if fmt == "Original":
+        return (content if isinstance(content, bytes) else content.encode("utf-8"), filename, mime)
+    if fmt == "PDF":
+        return _pdf_document(label, text_value), f"{stem}.pdf", "application/pdf"
+    if fmt == "PNG image":
+        return _png_image(label, text_value), f"{stem}.png", "image/png"
+    if fmt == "SVG image":
+        return _svg_image(label, text_value).encode("utf-8"), f"{stem}.svg", "image/svg+xml"
+    if fmt == "ZIP bundle":
+        return _zip_bundle(label, content, filename, mime), f"{stem}_bundle.zip", "application/zip"
+    if fmt == "HTML":
+        return _html_document(label, text_value).encode("utf-8"), f"{stem}.html", "text/html"
+    if fmt == "JSON":
+        try:
+            data = json.loads(text_value)
+        except Exception:
+            data = {"label": label, "content": text_value}
+        return json.dumps(data, indent=2, ensure_ascii=False).encode("utf-8"), f"{stem}.json", "application/json"
+    if fmt == "CSV":
+        return _csv_document(text_value).encode("utf-8"), f"{stem}.csv", "text/csv"
+    if fmt == "Markdown":
+        return text_value.encode("utf-8"), f"{stem}.md", "text/markdown"
+    return text_value.encode("utf-8"), f"{stem}.txt", "text/plain"
+
+
 def download(label: str, content: str | bytes, filename: str, mime: str) -> None:
     if os.getenv("REQUIRE_HUMAN_EXPORT_APPROVAL", "true").lower() == "true":
         if not st.checkbox(f"Human approves export: {label}", key=f"approve_{safe_key(label + filename)}"):
             st.caption("Export waits for human approval.")
             return
     data = content if isinstance(content, bytes) else content.encode("utf-8")
-    st.download_button("Download", data, filename, mime, key=f"download_{safe_key(filename + label)}")
+    key = safe_key(filename + label)
+    st.download_button(f"Download {label}", data, filename, mime, key=f"download_{key}")
+    with st.expander("More export formats", expanded=False):
+        fmt = st.selectbox(
+            "Format",
+            ["Original", "PDF", "PNG image", "SVG image", "ZIP bundle", "Markdown", "Text", "HTML", "JSON", "CSV"],
+            key=f"export_format_{key}",
+        )
+        export_data, export_name, export_mime = _export_variant(label, content, filename, mime, fmt)
+        st.download_button(f"Download as {fmt}", export_data, export_name, export_mime, key=f"download_more_{key}_{safe_key(fmt)}")
 
 
 def render_chat(user_text: str, answer: str, meta: str = "") -> None:
@@ -274,6 +487,47 @@ mermaid.initialize({{startOnLoad: true, theme: "base"}});
         height=height,
         scrolling=True,
     )
+
+
+def browser_speak_button(text: str, key: str) -> None:
+    payload = json.dumps((text or "")[:6000])
+    components.html(
+        f"""
+<div style="display:flex;gap:8px;align-items:center;margin:6px 0 10px">
+  <button id="speak_{key}" style="border:1px solid #d0d5dd;border-radius:999px;background:#101828;color:white;padding:7px 13px;cursor:pointer">Speak</button>
+  <button id="stop_{key}" style="border:1px solid #d0d5dd;border-radius:999px;background:white;color:#101828;padding:7px 13px;cursor:pointer">Stop</button>
+  <span style="font:12px system-ui;color:#667085">browser voice</span>
+</div>
+<script>
+const text_{key} = {payload};
+document.getElementById("speak_{key}").onclick = () => {{
+  window.speechSynthesis.cancel();
+  const utterance = new SpeechSynthesisUtterance(text_{key});
+  utterance.rate = 0.95;
+  utterance.pitch = 1;
+  window.speechSynthesis.speak(utterance);
+}};
+document.getElementById("stop_{key}").onclick = () => window.speechSynthesis.cancel();
+</script>
+""",
+        height=58,
+    )
+
+
+def render_voice_controls(text: str, label: str, engine: str, enabled: bool) -> None:
+    if not enabled or not text:
+        return
+    key = safe_key(label + text[:80])
+    with st.expander("Talk", expanded=True):
+        browser_speak_button(text, key)
+        if engine != "browser_speech":
+            if st.button("Generate audio file", key=f"gen_audio_{key}"):
+                audio = synthesize_speech(text, engine=engine, voice=os.getenv("OPENAI_TTS_VOICE", "alloy"), language=os.getenv("OCR_LANG", ""))
+                if audio.get("ok"):
+                    st.audio(audio["audio"], format=audio["mime"])
+                    download("spoken answer", audio["audio"], f"{label}_{key}.{audio['ext']}", audio["mime"])
+                else:
+                    st.info(audio.get("note", "Audio generation is not available for this engine."))
 
 
 def apply_provider(choice: Dict[str, str]) -> str:
@@ -446,6 +700,8 @@ manual = False
 manual_action = "Chat"
 response_language = "Auto"
 auto_mic_run = True
+voice_reply = False
+assistant_tts_engine = "browser_speech"
 provider = os.getenv("LLM_PROVIDER", "local")
 retrieval = "TF-IDF"
 top_k = 8
@@ -461,7 +717,7 @@ with top_buttons[0].popover("Files", use_container_width=True):
     }[preset]
     uploads = st.file_uploader(
         "Evidence files",
-        type=["zip", "pdf", "txt", "md", "csv", "tsv", "xlsx", "xls", "json", "png", "jpg", "jpeg", "webp"],
+        type=["zip", "pdf", "txt", "md", "csv", "tsv", "xlsx", "xls", "json", "png", "jpg", "jpeg", "webp", "srt", "vtt"],
         accept_multiple_files=True,
     )
     local_path = st.text_input("Local path", placeholder="Optional local file/folder")
@@ -526,6 +782,15 @@ with top_buttons[3].popover("Process", use_container_width=True):
     stt = st.selectbox("Speech to text", [m["label"] for m in stt_rows])
     os.environ["STT_ENGINE"] = stt_rows[[m["label"] for m in stt_rows].index(stt)]["engine"]
     auto_mic_run = st.checkbox("Auto-run mic transcript", value=True)
+    voice_reply = st.checkbox("Talk back", value=False)
+    tts_rows = text_to_speech_options()
+    tts_choice = st.selectbox("Assistant voice", [m["label"] for m in tts_rows], index=0)
+    assistant_tts_engine = tts_rows[[m["label"] for m in tts_rows].index(tts_choice)]["engine"]
+    os.environ["ASSISTANT_TTS_ENGINE"] = assistant_tts_engine
+    if assistant_tts_engine == "openai_tts":
+        os.environ["OPENAI_TTS_VOICE"] = st.selectbox("OpenAI voice", ["alloy", "echo", "fable", "onyx", "nova", "shimmer"], index=0)
+    if assistant_tts_engine == "edge_tts":
+        os.environ["EDGE_TTS_VOICE"] = st.text_input("Edge voice", os.getenv("EDGE_TTS_VOICE", "en-IN-NeerjaNeural"))
     top_k = st.slider("Evidence depth", 3, 15, defaults["k"])
 
 with top_buttons[4].popover("Guardrails", use_container_width=True):
@@ -540,7 +805,13 @@ with top_buttons[4].popover("Guardrails", use_container_width=True):
 paths = [save_upload(f) for f in uploads] if uploads else []
 if local_path:
     paths.append(Path(local_path))
-web_urls = [u.strip() for u in urls.splitlines() if u.strip()] if fetch_ok else []
+explicit_urls = extract_urls_from_text(urls)
+attachment_urls = extract_urls_from_paths(paths) if paths else []
+detected_urls = list(dict.fromkeys([*explicit_urls, *attachment_urls]))
+web_urls = detected_urls[:] if fetch_ok else []
+detected_url_note = ""
+if detected_urls and not fetch_ok:
+    detected_url_note = f" Detected {len(detected_urls)} URL(s) in pasted text or attachments; enable URL permission to transcribe and chunk them."
 
 with st.spinner("Indexing evidence"):
     corpus, summary = build_corpus_from_paths(paths) if paths else ([], "No uploaded files.")
@@ -548,7 +819,9 @@ with st.spinner("Indexing evidence"):
         web_corpus, web_summary = build_corpus_from_urls(web_urls, jurisdiction)
         corpus.extend(web_corpus)
         summary += " " + web_summary
-    cid = corpus_id(paths)
+    if detected_url_note:
+        summary += detected_url_note
+    cid = corpus_id(paths, web_urls)
     if corpus:
         save_corpus_pg(corpus, cid)
         supabase_log_metadata(corpus_metadata(corpus, cid))
@@ -570,13 +843,23 @@ with chat_tab:
         st.caption("Attach evidence without opening the setup drawer.")
         extra_files = st.file_uploader(
             "Add files",
-            type=["zip", "pdf", "txt", "md", "csv", "tsv", "xlsx", "xls", "json", "png", "jpg", "jpeg", "webp"],
+            type=["zip", "pdf", "txt", "md", "csv", "tsv", "xlsx", "xls", "json", "png", "jpg", "jpeg", "webp", "srt", "vtt"],
             accept_multiple_files=True,
             key="extra_files",
         )
         if extra_files:
-            more_corpus, more_summary = build_corpus_from_paths([save_upload(f) for f in extra_files])
+            extra_paths = [save_upload(f) for f in extra_files]
+            more_corpus, more_summary = build_corpus_from_paths(extra_paths)
+            extra_urls = extract_urls_from_paths(extra_paths)
+            if extra_urls and fetch_ok:
+                extra_web, extra_web_summary = build_corpus_from_urls(extra_urls, jurisdiction)
+                more_corpus.extend(extra_web)
+                more_summary += " " + extra_web_summary
+                web_urls.extend([u for u in extra_urls if u not in web_urls])
+            elif extra_urls:
+                more_summary += f" Detected {len(extra_urls)} URL(s); enable URL permission to transcribe and chunk them."
             corpus.extend(more_corpus)
+            cid = corpus_id(paths + extra_paths, web_urls)
             metadata = corpus_metadata(corpus, cid)
             st.caption(more_summary)
     with prompt_cols[1]:
@@ -635,6 +918,27 @@ if not (run or auto_run or st.session_state.get("live_exam")):
         st.info("Upload evidence or enable live search, then ask a question. Smart routing will choose the right tool.")
     st.stop()
 
+prompt_urls = extract_urls_from_text(brief)
+new_prompt_urls = [u for u in prompt_urls if u not in web_urls]
+if prompt_urls and not fetch_ok:
+    with chat_tab:
+        st.warning("URL(s) detected in the query. Open Files and enable URL fetch permission so the app can transcribe, chunk, and cite them.")
+if new_prompt_urls and fetch_ok:
+    with st.spinner("Transcribing URL evidence"):
+        prompt_corpus, prompt_summary = build_corpus_from_urls(new_prompt_urls, jurisdiction)
+        corpus.extend(prompt_corpus)
+        web_urls.extend(new_prompt_urls)
+        summary += " " + prompt_summary
+        cid = corpus_id(paths, web_urls)
+        metadata = corpus_metadata(corpus, cid)
+        if corpus:
+            save_corpus_pg(corpus, cid)
+            supabase_log_metadata(metadata)
+            if retrieval == "Pinecone":
+                pinecone_upsert(corpus, cid)
+    with chat_tab:
+        st.info(f"Transcribed and chunked {len(new_prompt_urls)} URL(s) from your query.")
+
 query = language_query(brief, response_language)
 
 if use_tavily and brief and (needs_live_search(brief) or manual and manual_action == "Live search"):
@@ -687,6 +991,7 @@ with chat_tab:
         a_col, s_col = st.columns([3, 1])
         with a_col:
             render_chat(brief, result["answer"], f"{result.get('provider', provider)} / {result.get('model', '')}")
+            render_voice_controls(result["answer"], "answer", assistant_tts_engine, voice_reply)
         with s_col:
             st.markdown("#### Evidence")
             st.caption(f"{len(result.get('sources', []))} chunks")
@@ -707,6 +1012,7 @@ with chat_tab:
         a_col, s_col = st.columns([3, 1])
         with a_col:
             render_chat(brief, result["answer"], f"{result.get('provider', provider)} / planner -> executor -> verifier")
+            render_voice_controls(result["answer"], "agent_answer", assistant_tts_engine, voice_reply)
         with s_col:
             render_sources(result.get("sources", []), "Retrieved")
             with st.expander("Agent trace"):
@@ -844,9 +1150,18 @@ with chat_tab:
     elif action == "Voiceover":
         models = text_to_speech_options()
         choice = st.selectbox("TTS model", [m["label"] for m in models])
-        guide = tts_guidance(brief, models[[m["label"] for m in models].index(choice)]["engine"], os.getenv("OCR_LANG", "eng"))
+        selected_tts_engine = models[[m["label"] for m in models].index(choice)]["engine"]
+        guide = tts_guidance(brief, selected_tts_engine, os.getenv("OCR_LANG", "eng"))
         st.json({k: v for k, v in guide.items() if k != "safe_text"})
         st.text_area("Safe script", guide["safe_text"], height=170)
+        browser_speak_button(guide["safe_text"], safe_key("voiceover" + guide["safe_text"][:80]))
+        if selected_tts_engine not in {"browser_speech", "manual_external"} and st.button("Generate voiceover audio"):
+            audio = synthesize_speech(guide["safe_text"], engine=selected_tts_engine, voice=os.getenv("OPENAI_TTS_VOICE", "alloy"), language=os.getenv("OCR_LANG", ""))
+            if audio.get("ok"):
+                st.audio(audio["audio"], format=audio["mime"])
+                download("voiceover audio", audio["audio"], f"voiceover.{audio['ext']}", audio["mime"])
+            else:
+                st.info(audio.get("note", "This TTS engine is a guided/external option."))
         if guide.get("url"):
             st.link_button("Open tool", guide["url"])
         download("voiceover script", guide["safe_text"], "voiceover_script.txt", "text/plain")

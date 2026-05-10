@@ -17,3 +17,7 @@ torch>=2.2.0
 indic-nlp-library>=0.92
 indic-transliteration>=2.3.60
 aksharamukha>=2.2
+youtube-transcript-api>=0.6.2
+pysrt>=1.1.2
+reportlab>=4.2.0
+edge-tts>=6.1.12

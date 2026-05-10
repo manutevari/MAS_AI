@@ -139,12 +139,17 @@ The compliance profile supports India, EU/EEA, California, UK, and Global/Unknow
 The app does not mass-scrape the internet. It supports controlled URL ingestion:
 
 - User provides specific URLs.
+- URLs can be typed in the URL box, pasted in the chat prompt, or found inside uploaded TXT/PDF/CSV/XLSX/JSON/image OCR/ZIP evidence.
+- YouTube watch, short, live, embed, and `youtu.be` links are treated as transcript sources when public captions are available.
 - User confirms permission under robots.txt, site terms, copyright, and local law.
 - The fetcher checks `robots.txt` before access.
 - Only HTTP/HTTPS URLs are allowed.
 - Large pages are blocked by a size limit.
 - Personal identifiers can be redacted before indexing.
 - Jurisdiction can be set to India, EU/EEA, California, UK, or Global/Unknown.
+- Permitted URLs are transcribed into text, section/semantic chunked, and cited as `web` evidence beside uploaded documents.
+- YouTube transcript chunks preserve start timestamps and watch links so answers can point back to the relevant moment.
+- If a platform blocks server-side transcript access, upload the matching `.srt` or `.vtt` subtitle file and it will be indexed as transcript evidence.
 
 This keeps web context auditable and grounded instead of attempting unlawful or indiscriminate scraping.
 
@@ -198,6 +203,7 @@ The interface is intentionally one-screen and chat-oriented:
 - density modes: Compact, Comfortable, and Ultra Compact adjust spacing for different screens
 - tools stay hidden unless advanced manual override is opened
 - Hindi/Devanagari content uses Devanagari font fallbacks such as Noto Sans Devanagari, Nirmala UI, and Mangal
+- every generated output can be exported after human approval as original format, PDF, PNG image, SVG image, ZIP bundle, Markdown, text, HTML, JSON, or CSV
 
 The default UI is query-first. The app chooses the workflow internally. Advanced manual override can expose Chat, Agent chat, Ask suggestions, Vector knowledge, Live search, AI policy scan, School clerk, Study quiz, Website, App blueprint, Codex workflow, Template, Voiceover, Marketing, Media inventory, Mindmap, Visual maps, Integrations, Swarm, Toolbox, Compliance, and Metadata.
 
@@ -459,8 +465,16 @@ Speech transcripts are used only as query text. Answers still come from uploaded
 
 ## Text To Speech / Audio Generator
 
-The voiceover tab supports free and paid TTS planning:
+The app can also talk back like an assistant:
 
+- `Talk back` in the processing popover adds a browser Speak/Stop control to RAG answers.
+- Browser speech synthesis is free/local and requires no key.
+- OpenAI TTS can generate downloadable MP3 audio when `OPENAI_API_KEY` is configured.
+- Edge TTS can generate MP3 audio when the optional `edge-tts` package is installed.
+
+The voiceover tab supports free and paid TTS planning and in-app generation where available:
+
+- Browser assistant voice: free/local, instant spoken output.
 - Galaxy.ai: free/external, multilingual, useful for creative outreach.
 - QuillBot Voice: free/external, useful for clean narration.
 - Airvoz: free/external, multilingual and useful for Hindi/community outreach.
