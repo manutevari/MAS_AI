@@ -191,8 +191,11 @@ SUPABASE_METADATA_TABLE = "rag_metadata"
 The interface is intentionally one-screen and chat-oriented:
 
 - sidebar: files and URLs first; model, retrieval, OCR/STT, privacy, and approval controls are grouped in collapsed panels
-- main screen: one brief/query box and one `Run` button; tools stay hidden unless advanced manual override is opened
-- output area: ChatGPT/Claude-style user and assistant messages, optional source panels, approval, and download
+- main screen: compact Chat, Evidence, and Debug tabs with short prompt chips and an icon-only run button
+- output area: ChatGPT/Claude-style user and assistant messages with a right-side evidence/source column for RAG answers
+- presets: Fast, Balanced, Deep Research, and Offline configure retrieval depth and chunking defaults
+- density modes: Compact, Comfortable, and Ultra Compact adjust spacing for different screens
+- tools stay hidden unless advanced manual override is opened
 - Hindi/Devanagari content uses Devanagari font fallbacks such as Noto Sans Devanagari, Nirmala UI, and Mangal
 
 The default UI is query-first. The app chooses the workflow internally. Advanced manual override can expose Chat, Agent chat, Ask suggestions, Vector knowledge, Live search, AI policy scan, School clerk, Study quiz, Website, App blueprint, Codex workflow, Template, Voiceover, Marketing, Media inventory, Mindmap, Visual maps, Integrations, Swarm, Toolbox, Compliance, and Metadata.
@@ -417,6 +420,12 @@ Only Tesseract is kept as a standard lightweight dependency in this deploy packa
 Transliteration is hidden from the normal UI and runs automatically. The model keeps the original script, adds roman transliteration on first mention, does not translate meaning unless asked, and marks uncertain OCR/transliteration as approximate. If cloud processing is not approved or no LLM key/local provider is available, the app preserves original script and states that automatic LLM transliteration was not performed. The grounding guard still applies: transliterated text must be treated as OCR-derived evidence and uncertainty must be stated when the source text is unclear.
 
 Advanced transliteration targets include Indic NLP Library, Aksharamukha, Indic transliteration rules, iNLTK target mode, Google Input Tools guidance, Bhashini target mode, and LLM-assisted transliteration. Optional NLP libraries are used when installed; otherwise the app keeps original text and lets the selected approved LLM handle transliteration in the answer.
+
+## Translation / Answer Language
+
+Transliteration is not translation. Transliteration changes script/sound form, for example Arabic or Urdu script into roman letters. Translation changes meaning into another language, for example English evidence into Hindi.
+
+Use the collapsed `Retrieval and input processing` panel and set `Answer language` to `Hindi - Devanagari`, `Urdu`, `English`, or another supported language. You can also ask directly: `answer in Hindi`, `translate summary into Urdu`, or `explain in English`. The LLM translates the final answer while preserving filenames, page numbers, citations, numeric values, names, and source quotes. If no approved LLM provider is active, the app will preserve retrieved evidence and show a translation note.
 
 ## Semantic Chunking
 

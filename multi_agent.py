@@ -1325,6 +1325,7 @@ def corpus_metadata(corpus: List[Dict[str, Any]], cid: str = "") -> Dict[str, An
         "mbert_model": os.getenv("MBERT_MODEL", "bert-base-multilingual-cased"),
         "stt_engine": os.getenv("STT_ENGINE", "manual"),
         "transliteration_engine": os.getenv("TRANSLITERATION_ENGINE", "auto_llm"),
+        "response_language": os.getenv("RESPONSE_LANGUAGE", "auto"),
         "compliance_jurisdiction": os.getenv("COMPLIANCE_JURISDICTION", "Global/Unknown"),
         "human_review_confirmed": os.getenv("HUMAN_REVIEW_CONFIRMED", "false"),
         "export_approval_required": os.getenv("REQUIRE_HUMAN_EXPORT_APPROVAL", "true"),
@@ -2850,6 +2851,50 @@ def transliteration_instruction(question: str, context: str, provider: str, key:
     return ""
 
 
+RESPONSE_LANGUAGE_OPTIONS = {
+    "auto": "the user's language; if unclear, use English",
+    "english": "English",
+    "hindi": "Hindi in Devanagari script",
+    "urdu": "Urdu in Urdu/Nastaliq script",
+    "arabic": "Arabic",
+    "bengali": "Bengali",
+    "tamil": "Tamil",
+    "telugu": "Telugu",
+    "marathi": "Marathi in Devanagari script",
+    "gujarati": "Gujarati",
+    "punjabi": "Punjabi in Gurmukhi script",
+    "french": "French",
+    "spanish": "Spanish",
+    "german": "German",
+}
+
+
+def response_language_instruction(question: str) -> str:
+    configured = os.getenv("RESPONSE_LANGUAGE", "auto").lower().strip()
+    q = (question or "").lower()
+    if configured == "auto":
+        if re.search(r"\b(hindi|हिंदी|हिन्दी|देवनागरी|हिंदी में|hindi me)\b", q):
+            configured = "hindi"
+        elif re.search(r"\b(urdu|اردو)\b", q):
+            configured = "urdu"
+        elif re.search(r"\b(arabic|عربي|العربية)\b", q):
+            configured = "arabic"
+        elif re.search(r"\b(english|अंग्रेजी|अंग्रेज़ी)\b", q):
+            configured = "english"
+    target = RESPONSE_LANGUAGE_OPTIONS.get(configured, os.getenv("RESPONSE_LANGUAGE", "auto"))
+    if configured == "auto":
+        return (
+            "Response language rule: answer in the user's language when clear; otherwise use English. "
+            "This is translation, not transliteration."
+        )
+    return (
+        f"Response language rule: translate the final answer into {target}. "
+        "Keep source citations, filenames, page numbers, section labels, numeric values, names, and quoted evidence exact. "
+        "Do not translate source filenames or citations. If a source phrase is important, show translated meaning and keep the original phrase in parentheses. "
+        "This is semantic translation of the answer, not mere transliteration."
+    )
+
+
 def _llm_select_workflow(
     query: str,
     actions: List[str],
@@ -2945,15 +2990,19 @@ def generate(question: str, chunks: List[Dict[str, Any]], external: bool = False
     safe_chunks = redacted_chunks(chunks) if provider != "local" else chunks
     context = format_context(safe_chunks)
     translit_rule = transliteration_instruction(question, context, provider, key)
+    lang_rule = response_language_instruction(question)
     rule = (
         "You are a scientific RAG assistant with strict research temperament. Use only uploaded-document evidence. Do not use memory, assumptions, or outside knowledge. Every factual claim must cite source filename and page/section from the evidence. Preserve units, numeric values, denominators, sample sizes, protein/gene names, methods, table/figure context, uncertainty, OCR text, transliteration uncertainty, and citations. Separate observation from interpretation. Do not overclaim causality, novelty, safety, clinical relevance, or statistical significance unless the evidence states it. If evidence is insufficient, answer: 'Not found in uploaded documents' and list the missing evidence."
         if not external else
         "You are a scientific RAG assistant with strict research temperament. Use uploaded evidence first. Every document-supported claim must cite source filename and page/section. Label any outside/open-source knowledge separately and never mix it with document-supported claims. Mark transliteration as approximate unless directly supported by OCR text. Do not overclaim causality, safety, clinical relevance, or statistical significance."
     )
+    rule += "\n\n" + lang_rule
     if translit_rule:
         rule += "\n\n" + translit_rule
     if provider == "local" or not key:
         answer = _local_answer(question, chunks)
+        if os.getenv("RESPONSE_LANGUAGE", "auto").lower() not in {"auto", "english"} or re.search(r"\b(hindi|urdu|arabic|translate|अनुवाद|हिंदी|اردو)\b", question or "", re.I):
+            answer += "\n\nTranslation note: semantic translation requires an approved LLM provider. The local fallback preserves retrieved evidence in its original language."
         if translit_rule and _has_non_latin(f"{question}\n{context}"):
             answer += "\n\nTransliteration note: automatic LLM transliteration was requested, but no approved LLM provider/key is active. Original script is preserved."
         return {"answer": answer, "provider": "local", "model": "evidence-only"}
