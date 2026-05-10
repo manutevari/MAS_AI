@@ -54,6 +54,7 @@ from multi_agent import (
     pinecone_upsert,
     render_template,
     retrieve,
+    relationship_manager_agent,
     save_corpus_pg,
     school_clerk_automation,
     speech_to_text_options,
@@ -194,6 +195,7 @@ WORKFLOWS = [
     "Live search",
     "Ingest latest updates",
     "AI policy scan",
+    "Relationship manager",
     "School clerk",
     "Study quiz",
     "Website",
@@ -873,12 +875,32 @@ with chat_tab:
     with prompt_cols[2].popover("Mic", use_container_width=True):
         mic_audio = st.audio_input("Mic") if hasattr(st, "audio_input") else None
         audio_upload = st.file_uploader("Upload audio", type=["wav", "mp3", "m4a", "ogg", "webm"])
-        speech = mic_audio or audio_upload
-        if speech and st.button("Transcribe"):
-            transcript = transcribe_audio(speech.getvalue(), getattr(speech, "name", "mic_input.wav"), os.getenv("STT_ENGINE", "manual"), os.getenv("OCR_LANG", "eng").split("+")[0])
-            st.session_state["pending_brief_text"] = transcript
-            st.session_state["pending_auto_run"] = auto_mic_run
-            st.rerun()
+        st.caption("Mic recordings transcribe automatically after you stop recording.")
+        stt_engine = os.getenv("STT_ENGINE", "manual")
+        stt_lang = os.getenv("OCR_LANG", "eng").split("+")[0]
+        if mic_audio:
+            mic_bytes = mic_audio.getvalue()
+            mic_signature = safe_key(stt_engine + str(len(mic_bytes)) + hashlib.sha1(mic_bytes).hexdigest())
+            if st.session_state.get("last_mic_transcript_signature") != mic_signature:
+                st.session_state["last_mic_transcript_signature"] = mic_signature
+                with st.spinner("Transcribing mic audio"):
+                    transcript = transcribe_audio(mic_bytes, getattr(mic_audio, "name", "mic_input.wav"), stt_engine, stt_lang)
+                if transcript.startswith("STT failed:") or transcript.startswith("STT engine"):
+                    st.warning(transcript)
+                else:
+                    st.session_state["pending_brief_text"] = transcript
+                    st.session_state["pending_auto_run"] = auto_mic_run
+                    st.rerun()
+            else:
+                st.caption("Mic transcript is already in the prompt.")
+        if audio_upload and st.button("Transcribe uploaded audio"):
+            transcript = transcribe_audio(audio_upload.getvalue(), getattr(audio_upload, "name", "audio_upload.wav"), stt_engine, stt_lang)
+            if transcript.startswith("STT failed:") or transcript.startswith("STT engine"):
+                st.warning(transcript)
+            else:
+                st.session_state["pending_brief_text"] = transcript
+                st.session_state["pending_auto_run"] = auto_mic_run
+                st.rerun()
     with prompt_cols[3]:
         run = st.button("Run", type="primary", help="Run the smart orchestration pipeline")
 
@@ -996,6 +1018,8 @@ with chat_tab:
             st.markdown("#### Evidence")
             st.caption(f"{len(result.get('sources', []))} chunks")
             render_sources(result.get("sources", []), "Retrieved")
+            with st.expander("BLEU / ROUGE / METEOR", expanded=False):
+                st.dataframe(result.get("eval_matrix", []), use_container_width=True)
             download("answer", json.dumps(result, indent=2), "answer.json", "application/json")
         log_query_pg(cid, brief, result["answer"], result.get("provider", ""), result.get("model", ""))
         log_rag_event(brief, result["answer"], result.get("provider", ""), result.get("model", ""), result.get("latency_s", 0.0), result.get("sources", []), retrieval)
@@ -1015,6 +1039,8 @@ with chat_tab:
             render_voice_controls(result["answer"], "agent_answer", assistant_tts_engine, voice_reply)
         with s_col:
             render_sources(result.get("sources", []), "Retrieved")
+            with st.expander("BLEU / ROUGE / METEOR", expanded=False):
+                st.dataframe(result.get("eval_matrix", []), use_container_width=True)
             with st.expander("Agent trace"):
                 st.json(result.get("conversation", []))
             download("agent answer", json.dumps(result, indent=2), "agent_answer.json", "application/json")
@@ -1038,6 +1064,8 @@ with chat_tab:
         c4.metric("Avg latency", f"{monitor['avg_latency_s']}s")
         st.markdown("### RAG Quality Metrics")
         st.dataframe(out["metrics"], use_container_width=True)
+        st.markdown("### BLEU / ROUGE / METEOR Matrix")
+        st.dataframe(out["lexical_eval_matrix"], use_container_width=True)
         st.markdown("### Quality Gates")
         st.dataframe(out["quality_gates"], use_container_width=True)
         st.markdown("### RAG + API Integration Plan")
@@ -1080,6 +1108,24 @@ with chat_tab:
         out = ai_policy_scan(profile, jurisdiction)
         st.json(out)
         download("policy scan", json.dumps(out, indent=2), "ai_policy_scan.json", "application/json")
+
+    elif action == "Relationship manager":
+        out = relationship_manager_agent(brief, corpus, provider=provider)
+        a_col, s_col = st.columns([3, 1])
+        with a_col:
+            render_chat(brief, out["answer"], f"{out['product_agent_response']['agent']} / {out['decision']['route']}")
+            render_voice_controls(out["answer"], "relationship_manager", assistant_tts_engine, voice_reply)
+            with st.expander("Architecture", expanded=False):
+                mermaid(out["architecture"], height=520)
+        with s_col:
+            st.markdown("#### Decision")
+            st.json(out["decision"])
+            render_sources(out.get("sources", []), "Product evidence")
+            with st.expander("Product agent response", expanded=False):
+                st.json(out["product_agent_response"])
+            with st.expander("BLEU / ROUGE / METEOR", expanded=False):
+                st.dataframe(out.get("eval_matrix", []), use_container_width=True)
+            download("relationship manager", json.dumps(out, indent=2), "relationship_manager.json", "application/json")
 
     elif action == "School clerk":
         out = school_clerk_automation(brief, corpus)

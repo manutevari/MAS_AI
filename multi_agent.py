@@ -495,6 +495,7 @@ def toolbox_catalog() -> List[Dict[str, str]]:
         ("NLP transliteration", "free/local/optional", "indic_nlp_library/aksharamukha/indic_transliteration", "TRANSLITERATION_ENGINE", "Indic NLP, Aksharamukha, iNLTK target, Google Input Tools guidance, LLM fallback"),
         ("Speech to text", "free/paid", "openai", "OPENAI_API_KEY", "manual transcript + Whisper API + integration targets"),
         ("Text to speech", "free/paid", "none required", "", "safe script + external/free/local model registry"),
+        ("Relationship manager", "free/local", "dataclasses/scikit-learn", "", "intent classification, RAG product answers, EMI, lead drafts, structured schemas"),
         ("Website builder", "free/local", "streamlit", "", "HTML preview and download"),
         ("Templates", "free/local", "streamlit", "", "HTML/Markdown/JSON/CSV template generation"),
         ("School clerk automation", "free/local", "pandas", "", "result sheets, attendance, notices, certificates, roll lists"),
@@ -1849,6 +1850,403 @@ def vector_space_knowledge(corpus: List[Dict[str, Any]], query: str = "entire co
     }
 
 
+def _metric_tokens(text: str) -> List[str]:
+    return re.findall(r"[\w\u0900-\u097F\u0600-\u06FF]+", (text or "").lower())
+
+
+def _ngrams(tokens: List[str], n: int) -> List[Tuple[str, ...]]:
+    return [tuple(tokens[i:i + n]) for i in range(0, max(0, len(tokens) - n + 1))]
+
+
+def _count_overlap(items: List[Tuple[str, ...]], refs: List[Tuple[str, ...]]) -> int:
+    ref_counts: Dict[Tuple[str, ...], int] = {}
+    for item in refs:
+        ref_counts[item] = ref_counts.get(item, 0) + 1
+    overlap = 0
+    for item in items:
+        if ref_counts.get(item, 0) > 0:
+            overlap += 1
+            ref_counts[item] -= 1
+    return overlap
+
+
+def bleu_score(candidate: str, reference: str, max_n: int = 4) -> float:
+    cand = _metric_tokens(candidate)
+    ref = _metric_tokens(reference)
+    if not cand or not ref:
+        return 0.0
+    precisions = []
+    for n in range(1, max_n + 1):
+        cand_grams = _ngrams(cand, n)
+        ref_grams = _ngrams(ref, n)
+        if not cand_grams:
+            precisions.append(0.0)
+            continue
+        # Add-one smoothing avoids zeroing the whole score on short scientific answers.
+        precisions.append((_count_overlap(cand_grams, ref_grams) + 1) / (len(cand_grams) + 1))
+    geo = 1.0
+    for p in precisions:
+        geo *= max(p, 1e-12) ** (1 / max_n)
+    brevity = 1.0 if len(cand) > len(ref) else pow(2.718281828, 1 - (len(ref) / max(len(cand), 1)))
+    return round(float(brevity * geo), 4)
+
+
+def _f1(overlap: int, pred_count: int, ref_count: int) -> float:
+    if not overlap or not pred_count or not ref_count:
+        return 0.0
+    precision = overlap / pred_count
+    recall = overlap / ref_count
+    return (2 * precision * recall) / max(precision + recall, 1e-12)
+
+
+def _lcs_len(a: List[str], b: List[str]) -> int:
+    prev = [0] * (len(b) + 1)
+    for token_a in a:
+        cur = [0]
+        for j, token_b in enumerate(b, start=1):
+            cur.append(prev[j - 1] + 1 if token_a == token_b else max(prev[j], cur[-1]))
+        prev = cur
+    return prev[-1]
+
+
+def rouge_scores(candidate: str, reference: str) -> Dict[str, float]:
+    cand = _metric_tokens(candidate)
+    ref = _metric_tokens(reference)
+    if not cand or not ref:
+        return {"rouge_1_f1": 0.0, "rouge_2_f1": 0.0, "rouge_l_f1": 0.0}
+    c1, r1 = _ngrams(cand, 1), _ngrams(ref, 1)
+    c2, r2 = _ngrams(cand, 2), _ngrams(ref, 2)
+    lcs = _lcs_len(cand, ref)
+    return {
+        "rouge_1_f1": round(_f1(_count_overlap(c1, r1), len(c1), len(r1)), 4),
+        "rouge_2_f1": round(_f1(_count_overlap(c2, r2), len(c2), len(r2)), 4),
+        "rouge_l_f1": round(_f1(lcs, len(cand), len(ref)), 4),
+    }
+
+
+def meteor_score(candidate: str, reference: str) -> float:
+    cand = _metric_tokens(candidate)
+    ref = _metric_tokens(reference)
+    if not cand or not ref:
+        return 0.0
+    ref_positions: Dict[str, List[int]] = {}
+    for idx, token in enumerate(ref):
+        ref_positions.setdefault(token, []).append(idx)
+    matched_positions = []
+    used = set()
+    for token in cand:
+        for pos in ref_positions.get(token, []):
+            if pos not in used:
+                used.add(pos)
+                matched_positions.append(pos)
+                break
+    matches = len(matched_positions)
+    if not matches:
+        return 0.0
+    precision = matches / len(cand)
+    recall = matches / len(ref)
+    fmean = (10 * precision * recall) / max(recall + 9 * precision, 1e-12)
+    chunks = 1
+    for a, b in zip(matched_positions, matched_positions[1:]):
+        if b != a + 1:
+            chunks += 1
+    penalty = 0.5 * ((chunks / matches) ** 3)
+    return round(float(fmean * (1 - penalty)), 4)
+
+
+def lexical_eval_matrix(answer: str, reference: str) -> List[Dict[str, Any]]:
+    rouge = rouge_scores(answer, reference)
+    return [
+        {"metric": "BLEU-4", "value": bleu_score(answer, reference), "reference": "retrieved evidence", "use": "n-gram precision; useful for citation/evidence wording overlap"},
+        {"metric": "ROUGE-1 F1", "value": rouge["rouge_1_f1"], "reference": "retrieved evidence", "use": "unigram overlap with evidence"},
+        {"metric": "ROUGE-2 F1", "value": rouge["rouge_2_f1"], "reference": "retrieved evidence", "use": "phrase overlap with evidence"},
+        {"metric": "ROUGE-L F1", "value": rouge["rouge_l_f1"], "reference": "retrieved evidence", "use": "longest common subsequence with evidence"},
+        {"metric": "METEOR", "value": meteor_score(answer, reference), "reference": "retrieved evidence", "use": "precision/recall balance with fragmentation penalty"},
+    ]
+
+
+def answer_eval_matrix(answer: str, chunks: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    reference = " ".join(str(c.get("text", "")) for c in chunks[:8])
+    if not answer or not reference:
+        return lexical_eval_matrix(answer or "", reference or "")
+    return lexical_eval_matrix(answer, reference)
+
+
+@dataclass
+class RAGDecision:
+    intent: str
+    product: str = "general"
+    action_type: str = "answer"
+    route: str = "generic_response"
+    confidence: float = 0.55
+    missing_fields: List[str] | None = None
+
+
+@dataclass
+class CustomerInfo:
+    name: str = ""
+    contact: str = ""
+    email: str = ""
+    product: str = "general"
+    consent_confirmed: bool = False
+
+
+@dataclass
+class EMIInput:
+    principal: float = 0.0
+    annual_rate: float = 0.0
+    tenure_months: int = 0
+    product: str = "general"
+
+
+@dataclass
+class LeadPayload:
+    product: str
+    customer: Dict[str, Any]
+    request: str
+    status: str = "draft_human_review_required"
+
+
+@dataclass
+class ProductAgentResponse:
+    agent: str
+    action_type: str
+    answer: str
+    emi: Dict[str, Any] | None = None
+    lead_payload: Dict[str, Any] | None = None
+    sources: List[Dict[str, Any]] | None = None
+
+
+def relationship_manager_state() -> Dict[str, Any]:
+    return {
+        "state_schema": {
+            "product_workspaces": ["personal_loan", "two_wheeler_loan", "generic"],
+            "shared_state": ["query", "intent", "selected_product", "customer_info", "emi_input", "retrieved_context", "final_response"],
+            "human_top_of_loop": True,
+        },
+        "structured_output_schemas": ["RAGDecision", "RAGAnswer", "ProductAgentResponse", "CustomerInfo", "EMIInput", "LeadPayload"],
+        "product_workspaces": {
+            "personal_loan": {"agent": "personal_loan_agent", "actions": ["collect_customer_info", "calculate_emi", "create_lead", "product_rag"]},
+            "two_wheeler_loan": {"agent": "two_wheeler_loan_agent", "actions": ["collect_customer_info", "calculate_emi", "create_lead", "product_rag"]},
+            "generic": {"agent": "relationship_manager", "actions": ["generic_response", "ask_clarification"]},
+        },
+    }
+
+
+def relationship_manager_mermaid() -> str:
+    return "\n".join(
+        [
+            "flowchart LR",
+            '  Q["User Query"] --> RM{"Relationship Manager\\nIntent Classification"}',
+            '  IDX["Offline Document Indexing\\nload -> chunk -> embed -> vector upsert"] --> RAG["RAG Retrieval Service"]',
+            '  RM -->|Generic Query| G["Generic Response"]',
+            '  RM -->|Product Info| RAG',
+            '  RAG --> A["RAG Final Answer\\nwith citations"]',
+            '  RM -->|Lead/Application| RA["Route Agent"]',
+            '  RM -->|EMI Calculation| RE["Route EMI"]',
+            '  RM -->|Unclear| C["Ask Clarification"]',
+            '  RA --> SP{"Select Product Agent"}',
+            '  RE --> SP',
+            '  SP --> PL["Personal Loan Agent"]',
+            '  SP --> TW["Two Wheeler Loan Agent"]',
+            '  PL --> CI["Collect Customer Info"]',
+            '  PL --> EMI["Calculate EMI"]',
+            '  PL --> LEAD["Create Lead"]',
+            '  TW --> CI',
+            '  TW --> EMI',
+            '  TW --> LEAD',
+            '  CI --> H["Human Review"]',
+            '  EMI --> H',
+            '  LEAD --> H',
+            '  A --> H',
+            '  H --> F["Final Response"]',
+        ]
+    )
+
+
+def _select_product(query: str) -> str:
+    q = (query or "").lower()
+    if re.search(r"\b(two wheeler|2 wheeler|bike|scooter|motorcycle|vehicle)\b", q):
+        return "two_wheeler_loan"
+    if re.search(r"\b(personal loan|salary loan|unsecured loan|consumer loan)\b", q):
+        return "personal_loan"
+    if re.search(r"\b(loan|emi|interest|tenure|eligibility|application|lead)\b", q):
+        return "personal_loan"
+    return "general"
+
+
+def _relationship_intent(query: str, corpus: List[Dict[str, Any]]) -> RAGDecision:
+    q = (query or "").strip()
+    lower = q.lower()
+    product = _select_product(q)
+    if len(q.split()) < 3:
+        return RAGDecision("unclear", product, "clarify", "ask_clarification", 0.7, ["clear product or question"])
+    if re.search(r"\b(emi|installment|instalment|monthly payment|interest|tenure|down payment)\b", lower):
+        return RAGDecision("emi_calculation", product, "calculate_emi", "route_emi", 0.86, [])
+    if re.search(r"\b(apply|application|lead|call back|callback|contact me|submit|interested|enquiry|inquiry)\b", lower):
+        return RAGDecision("lead_application", product, "create_lead", "route_agent", 0.84, [])
+    if re.search(r"\b(rate|eligibility|documents|required|fees|charges|product|benefit|feature|policy|loan)\b", lower):
+        return RAGDecision("product_information", product, "product_rag", "rag_flow", 0.82 if corpus else 0.62, [])
+    if corpus:
+        return RAGDecision("product_information", product, "product_rag", "rag_flow", 0.68, [])
+    return RAGDecision("generic", product, "answer", "generic_response", 0.58, [])
+
+
+def _money_value(text_value: str) -> float:
+    match = re.search(r"(?:rs\.?|inr|₹)?\s*([0-9][0-9,]*(?:\.\d+)?)\s*(lakh|lac|crore|k)?", text_value, re.I)
+    if not match:
+        return 0.0
+    value = float(match.group(1).replace(",", ""))
+    unit = (match.group(2) or "").lower()
+    if unit in {"lakh", "lac"}:
+        value *= 100_000
+    elif unit == "crore":
+        value *= 10_000_000
+    elif unit == "k":
+        value *= 1_000
+    return value
+
+
+def _rate_value(text_value: str) -> float:
+    match = re.search(r"(\d+(?:\.\d+)?)\s*%", text_value)
+    return float(match.group(1)) if match else 0.0
+
+
+def _tenure_months(text_value: str) -> int:
+    match = re.search(r"(\d+)\s*(months?|mo|yrs?|years?)", text_value, re.I)
+    if not match:
+        return 0
+    value = int(match.group(1))
+    unit = match.group(2).lower()
+    return value * 12 if unit.startswith(("yr", "year")) else value
+
+
+def calculate_emi_details(emi: EMIInput) -> Dict[str, Any]:
+    missing = []
+    if emi.principal <= 0:
+        missing.append("loan amount")
+    if emi.annual_rate <= 0:
+        missing.append("annual interest rate")
+    if emi.tenure_months <= 0:
+        missing.append("tenure in months or years")
+    if missing:
+        return {"ok": False, "missing_fields": missing, "note": "Provide amount, annual rate, and tenure for EMI calculation."}
+    monthly_rate = emi.annual_rate / (12 * 100)
+    if monthly_rate == 0:
+        monthly_emi = emi.principal / emi.tenure_months
+    else:
+        factor = (1 + monthly_rate) ** emi.tenure_months
+        monthly_emi = emi.principal * monthly_rate * factor / (factor - 1)
+    total = monthly_emi * emi.tenure_months
+    return {
+        "ok": True,
+        "product": emi.product,
+        "principal": round(emi.principal, 2),
+        "annual_rate_percent": round(emi.annual_rate, 3),
+        "tenure_months": emi.tenure_months,
+        "monthly_emi": round(monthly_emi, 2),
+        "total_payment": round(total, 2),
+        "total_interest": round(total - emi.principal, 2),
+        "formula": "P*r*(1+r)^n / ((1+r)^n - 1), where r = annual_rate/12/100",
+        "human_review": "Indicative estimate only; verify bank/NBFC terms, fees, taxes, eligibility, and sanctioned rate.",
+    }
+
+
+def _customer_info(query: str, product: str) -> CustomerInfo:
+    name_match = re.search(r"\b(?:name is|i am|my name is)\s+([A-Za-z .]{2,60})", query, re.I)
+    contact_match = re.search(INDIAN_PII_PATTERNS["phone"], query)
+    email_match = re.search(INDIAN_PII_PATTERNS["email"], query, re.I)
+    consent = bool(re.search(r"\b(consent|agree|permission|call me|contact me|opt in|opt-in)\b", query, re.I))
+    return CustomerInfo(
+        name=(name_match.group(1).strip(" .") if name_match else ""),
+        contact=(contact_match.group(0) if contact_match else ""),
+        email=(email_match.group(0) if email_match else ""),
+        product=product,
+        consent_confirmed=consent,
+    )
+
+
+def _lead_payload(query: str, product: str) -> Dict[str, Any]:
+    customer = _customer_info(query, product)
+    missing = []
+    if not customer.name:
+        missing.append("name")
+    if not (customer.contact or customer.email):
+        missing.append("phone or email")
+    if not customer.consent_confirmed:
+        missing.append("explicit consent to contact")
+    payload = LeadPayload(product=product, customer=asdict(customer), request=query)
+    out = asdict(payload)
+    out["missing_fields"] = missing
+    out["ready_to_submit"] = not missing
+    out["privacy_note"] = "Draft only. Human must confirm lawful basis/consent before export, CRM entry, WhatsApp, or outbound call."
+    return out
+
+
+def relationship_manager_agent(query: str, corpus: List[Dict[str, Any]], provider: str = "local") -> Dict[str, Any]:
+    decision = _relationship_intent(query, corpus)
+    state = relationship_manager_state()
+    product = decision.product
+    selected_agent = state["product_workspaces"].get(product, state["product_workspaces"]["generic"])["agent"]
+    hits = retrieve(corpus, query or product, 8) if corpus else []
+    answer = ""
+    emi_details: Dict[str, Any] | None = None
+    lead: Dict[str, Any] | None = None
+
+    if decision.route == "ask_clarification":
+        answer = "Please clarify the product and task. Example: ask product information, calculate EMI with amount/rate/tenure, or create a lead with consent."
+    elif decision.route == "route_emi":
+        emi = EMIInput(_money_value(query), _rate_value(query), _tenure_months(query), product)
+        emi_details = calculate_emi_details(emi)
+        if emi_details.get("ok"):
+            answer = (
+                f"Indicative EMI for `{product}`: **₹{emi_details['monthly_emi']:,.2f}/month** for "
+                f"₹{emi_details['principal']:,.2f} at {emi_details['annual_rate_percent']}% for {emi_details['tenure_months']} months. "
+                f"Total interest: ₹{emi_details['total_interest']:,.2f}. Human review is required before financial use."
+            )
+        else:
+            answer = "I need " + ", ".join(emi_details.get("missing_fields", [])) + " to calculate EMI."
+    elif decision.route == "route_agent":
+        lead = _lead_payload(query, product)
+        if lead["ready_to_submit"]:
+            safe_customer = dict(lead["customer"])
+            safe_customer["contact"] = redact_personal_data(str(safe_customer.get("contact", "")))
+            safe_customer["email"] = redact_personal_data(str(safe_customer.get("email", "")))
+            answer = f"Draft lead created for `{product}`. Human review and lawful consent confirmation are required before submission. Customer: {safe_customer}."
+        else:
+            answer = "To create a compliant lead, please provide: " + ", ".join(lead["missing_fields"]) + "."
+    elif decision.route == "rag_flow":
+        if hits:
+            rag = generate(query, hits, external=False)
+            answer = rag["answer"]
+            provider = rag.get("provider", provider)
+        else:
+            answer = "No product evidence is indexed yet. Upload policy/product documents or permitted URLs first."
+    else:
+        answer = "I can help with product information, EMI calculation, application lead capture, or clarification. Upload evidence for grounded product answers."
+
+    response = ProductAgentResponse(
+        agent=selected_agent,
+        action_type=decision.action_type,
+        answer=answer,
+        emi=emi_details,
+        lead_payload=lead,
+        sources=hits,
+    )
+    return {
+        "decision": asdict(decision),
+        "state": state,
+        "product_agent_response": asdict(response),
+        "answer": answer,
+        "sources": hits,
+        "eval_matrix": answer_eval_matrix(answer, hits),
+        "architecture": relationship_manager_mermaid(),
+        "provider": provider,
+        "model": "relationship-manager-structured-router",
+        "human_review": "Human remains final authority over financial advice, lead creation, export, messaging, and customer contact.",
+    }
+
+
 def agent_metrics_session(
     query: str,
     corpus: List[Dict[str, Any]],
@@ -1869,6 +2267,9 @@ def agent_metrics_session(
     table_aware = table_chunks > 0 or any("|" in str(h.get("text", "")) for h in hits)
     has_api_keys = any(os.getenv(k) for k in ["OPENAI_API_KEY", "OPENROUTER_API_KEY", "HF_TOKEN", "GOOGLE_API_KEY", "GROK_API_KEY", "ANTHROPIC_API_KEY"])
     has_storage = bool(os.getenv("DATABASE_URL") or os.getenv("PINECONE_API_KEY") or os.getenv("SUPABASE_URL"))
+    reference_text = " ".join(str(h.get("text", "")) for h in hits[:8])
+    baseline_answer = _local_answer(query or "metrics rag api mcp", hits)
+    eval_matrix = lexical_eval_matrix(baseline_answer, reference_text)
     metrics = [
         {"metric": "Corpus chunks", "value": len(corpus), "target": ">= 1 for document RAG", "status": "ok" if corpus else "needs evidence"},
         {"metric": "Unique sources", "value": source_count, "target": ">= 1 cited source", "status": "ok" if source_count else "needs sources"},
@@ -1879,6 +2280,7 @@ def agent_metrics_session(
         {"metric": "Average chunk chars", "value": round(total_chars / max(len(corpus), 1), 1), "target": "section-aware, not arbitrary 1000-char split", "status": "ok"},
         {"metric": "API key readiness", "value": "configured" if has_api_keys else "local only", "target": "optional external LLM/API integration", "status": "ok" if has_api_keys else "local"},
         {"metric": "Vector/storage readiness", "value": "configured" if has_storage else "local only", "target": "Postgres/Pinecone/Supabase", "status": "ok" if has_storage else "local"},
+        {"metric": "BLEU/ROUGE/METEOR matrix", "value": "computed", "target": "lexical answer-vs-evidence evaluation", "status": "ok" if hits else "needs evidence"},
     ]
     gates = [
         {"gate": "Grounding", "check": "Every model claim must cite retrieved source/page/section.", "status": "ready" if citation_ready else "blocked until evidence is uploaded"},
@@ -1924,6 +2326,8 @@ def agent_metrics_session(
         "1. Metrics are the operating dashboard for the whole course project.\n"
         "2. RAG + API integration must stay grounded, secret-safe, and observable.\n"
         "3. MCP server work should expose only stable, typed tools after feedback and eval checks.\n\n"
+        "BLEU, ROUGE, and METEOR are included as lexical evidence-overlap metrics. They are useful signals, "
+        "not a replacement for citation checking, human review, or factual verification.\n\n"
         f"**Provider:** {provider}  \n"
         f"**Retrieval:** {retrieval_engine}  \n"
         f"**Jurisdiction:** {jurisdiction}\n"
@@ -1931,6 +2335,7 @@ def agent_metrics_session(
     return {
         "markdown": markdown,
         "metrics": metrics,
+        "lexical_eval_matrix": eval_matrix,
         "quality_gates": gates,
         "rag_api_plan": api_plan,
         "mcp_server_plan": mcp_plan,
@@ -1958,6 +2363,7 @@ def orchestration_manager_plan(
 
     rules = [
         ("Metrics", ["metrics", "metric", "eval", "evaluation", "observability", "monitoring", "feedback loop", "langsmith", "wandb", "evidently", "rag api", "rag and api", "mcp", "mcp server", "next session", "course"], "Metrics/course insight detected; inspect RAG quality, API readiness, feedback loop, and MCP server plan."),
+        ("Relationship manager", ["relationship manager", "personal loan", "two wheeler", "bike loan", "scooter loan", "emi", "loan application", "loan lead", "eligibility", "interest rate"], "Product/loan relationship-manager intent detected; classify and route to RAG, EMI, lead, or clarification path."),
         ("School clerk", ["school clerk", "clerk", "result", "marksheet", "mark sheet", "report card", "attendance", "fee reminder", "bonafide", "transfer certificate", "tc", "admission register", "roll list"], "School-office automation intent detected; use clerk workflow with result generation and human review."),
         ("Study quiz", ["quiz", "exam", "question paper", "mcq", "flashcard", "physics wallah", "textbook", "student"], "Study/exam intent detected; generate grounded learning items."),
         ("Visual maps", ["mindmap", "mind map", "flowchart", "flow chart", "concept map", "visual", "diagram", "graphic"], "Visual explanation requested; create evidence maps and Mermaid/SVG outputs."),
@@ -3385,7 +3791,7 @@ async def answer_rag_chat(
         os.environ["LLM_PROVIDER"] = provider
     hits = embedding_retrieve(corpus, question, top_k) if retrieval_engine == "openai_embeddings" else retrieve(corpus, question, top_k)
     ans = generate(question, hits, allow_external_knowledge, history)
-    return {"answer": ans["answer"], "sources": hits, "latency_s": 0.0, "langchain_document_count": len(hits), **ans}
+    return {"answer": ans["answer"], "sources": hits, "latency_s": 0.0, "langchain_document_count": len(hits), "eval_matrix": answer_eval_matrix(ans["answer"], hits), **ans}
 
 
 async def answer_with_agent_pipeline_from_corpus(
@@ -3404,7 +3810,7 @@ async def answer_with_agent_pipeline_from_corpus(
     hits = retrieve(corpus, question, 8)
     ans = generate(question, hits)
     turns.append({"agent": "verifier", "message": "Check that the answer cites retrieved evidence.", "payload": {"sources": len(hits)}})
-    return {"answer": ans["answer"], "sources": hits, "conversation": turns, "latency_s": 0.0, **ans}
+    return {"answer": ans["answer"], "sources": hits, "conversation": turns, "latency_s": 0.0, "eval_matrix": answer_eval_matrix(ans["answer"], hits), **ans}
 
 
 async def run_multi_agent(goal: str, provider: Optional[str] = None, data_zip: Optional[Path] = None, max_docs: int = 40, max_pages: int = 20, max_iterations: int = 3) -> Dict[str, Any]:

@@ -28,6 +28,7 @@ Core capabilities:
 - hidden smart router that sends mic/text/doc/URL queries to the right agent and tool workflow
 - mic transcription can auto-route through smart workflow selection to execute the required task
 - course-inspired metrics node for RAG quality, feedback, API integration readiness, and MCP server planning
+- relationship-manager architecture with structured schemas, shared state, intent classification, RAG product answers, EMI calculation, lead drafts, and product-agent routing
 
 Storage and search:
 
@@ -205,7 +206,19 @@ The interface is intentionally one-screen and chat-oriented:
 - Hindi/Devanagari content uses Devanagari font fallbacks such as Noto Sans Devanagari, Nirmala UI, and Mangal
 - every generated output can be exported after human approval as original format, PDF, PNG image, SVG image, ZIP bundle, Markdown, text, HTML, JSON, or CSV
 
-The default UI is query-first. The app chooses the workflow internally. Advanced manual override can expose Chat, Agent chat, Ask suggestions, Vector knowledge, Live search, AI policy scan, School clerk, Study quiz, Website, App blueprint, Codex workflow, Template, Voiceover, Marketing, Media inventory, Mindmap, Visual maps, Integrations, Swarm, Toolbox, Compliance, and Metadata.
+The default UI is query-first. The app chooses the workflow internally. Advanced manual override can expose Chat, Agent chat, Ask suggestions, Vector knowledge, Live search, AI policy scan, Relationship manager, School clerk, Study quiz, Website, App blueprint, Codex workflow, Template, Voiceover, Marketing, Media inventory, Mindmap, Visual maps, Integrations, Swarm, Toolbox, Compliance, and Metadata.
+
+## Relationship Manager Architecture
+
+The project incorporates the uploaded architecture diagram as a reusable workflow:
+
+- offline document indexing path: load files, chunk text, create embeddings/vector records, and keep source metadata
+- structured output schemas: `RAGDecision`, `ProductAgentResponse`, `CustomerInfo`, `EMIInput`, and `LeadPayload`
+- shared state: product workspaces for personal loan, two-wheeler loan, and generic relationship-manager tasks
+- relationship manager layer: classifies generic, product-information, EMI, lead/application, and unclear queries
+- RAG retrieval service: product-information queries retrieve uploaded product evidence and generate grounded answers
+- product agents: selected by product, then route to collect customer info, calculate EMI, or create a draft lead
+- human remains above the relationship manager, product agents, lead creation, exports, messaging, and financial use
 
 ## Smart Auto Routing
 
@@ -222,6 +235,7 @@ Smart routing keeps the orchestration manager inside the pipeline instead of exp
 The `Metrics` node implements the course-session takeaway: metrics first, then RAG/API integration, then MCP server work.
 
 - tracks corpus coverage, source count, retrieval score, numerical/table evidence, API readiness, and vector/storage readiness
+- computes BLEU-4, ROUGE-1, ROUGE-2, ROUGE-L, and METEOR answer-vs-evidence scores as a lexical evaluation matrix
 - logs chat/agent events locally through `monitoring.py`
 - supports optional LangSmith, W&B, and Evidently when their packages/keys are configured
 - captures thumbs-up/down feedback for future evaluation sets
@@ -454,6 +468,7 @@ Default chunking is section-aware and sentence-based so tables, headings, and do
 The chat tab includes a speech input helper for typing queries:
 
 - Browser microphone input: available when Streamlit supports `st.audio_input`.
+- Mic recordings transcribe automatically after the user stops recording; the transcript is placed into the prompt on the next rerun.
 - Manual transcript paste: free and always available.
 - OpenAI Whisper API: paid/cloud, implemented through `OPENAI_API_KEY` and `OPENAI_STT_MODEL`.
 - Whisper local/faster-whisper: free/local, selectable integration target.
