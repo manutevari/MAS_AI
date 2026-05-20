@@ -23,7 +23,7 @@ from io import BytesIO
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 from html import escape
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import urlparse
 from urllib.request import Request, urlopen
 from urllib.robotparser import RobotFileParser
 
@@ -34,7 +34,7 @@ except Exception:  # pragma: no cover
         return False
 
 
-EXTS = {".pdf", ".txt", ".md", ".csv", ".tsv", ".xlsx", ".xls", ".json", ".png", ".jpg", ".jpeg", ".webp", ".srt", ".vtt"}
+EXTS = {".pdf", ".txt", ".md", ".csv", ".tsv", ".xlsx", ".xls", ".json", ".png", ".jpg", ".jpeg", ".webp"}
 PROVIDERS = {"local", "ollama", "openai", "claude", "grok", "gemini", "huggingface", "openrouter", "custom"}
 DATABASE_URL = "DATABASE_URL"
 USER_AGENT = "ScientificRAG-CompliantFetcher/1.0"
@@ -309,15 +309,6 @@ SPEECH_TO_TEXT_MODELS = [
 
 TEXT_TO_SPEECH_MODELS = [
     {
-        "label": "Browser assistant voice - free/local",
-        "engine": "browser_speech",
-        "pricing": "free/browser",
-        "key_required": "no",
-        "languages": "browser/OS dependent",
-        "best_for": "instant assistant-style spoken answers in the app",
-        "url": "",
-    },
-    {
         "label": "Manual external TTS download - free",
         "engine": "manual_external",
         "pricing": "free",
@@ -495,7 +486,6 @@ def toolbox_catalog() -> List[Dict[str, str]]:
         ("NLP transliteration", "free/local/optional", "indic_nlp_library/aksharamukha/indic_transliteration", "TRANSLITERATION_ENGINE", "Indic NLP, Aksharamukha, iNLTK target, Google Input Tools guidance, LLM fallback"),
         ("Speech to text", "free/paid", "openai", "OPENAI_API_KEY", "manual transcript + Whisper API + integration targets"),
         ("Text to speech", "free/paid", "none required", "", "safe script + external/free/local model registry"),
-        ("Relationship manager", "free/local", "dataclasses/scikit-learn", "", "intent classification, RAG product answers, EMI, lead drafts, structured schemas"),
         ("Website builder", "free/local", "streamlit", "", "HTML preview and download"),
         ("Templates", "free/local", "streamlit", "", "HTML/Markdown/JSON/CSV template generation"),
         ("School clerk automation", "free/local", "pandas", "", "result sheets, attendance, notices, certificates, roll lists"),
@@ -506,7 +496,6 @@ def toolbox_catalog() -> List[Dict[str, str]]:
         ("Swarm topology", "free/local", "streamlit", "", "hybrid/hierarchy/mesh/star/pipeline/ring/tree/blackboard/committee"),
         ("Human review", "free/local", "streamlit", "", "approval gates, metadata, audit trail"),
         ("Codex-style workflow", "free/local", "streamlit", "", "workspace-first actions, verification, review, package handoff"),
-        ("Metrics and evals", "free/local + optional paid", "monitoring/langsmith/evidently/wandb", "LANGSMITH_API_KEY/WANDB_API_KEY", "RAG quality metrics, feedback loop, API readiness, MCP planning"),
     ]
     out = []
     for feature, cost, packages, envs, note in rows:
@@ -548,53 +537,6 @@ def tts_guidance(text: str, engine: str, language: str = "Hindi/English") -> Dic
         "warning": warning,
         "note": "For external free TTS websites, paste only non-sensitive text and review voice rights, platform terms, and local law before publishing.",
     }
-
-
-def synthesize_speech(text: str, engine: str = "browser_speech", voice: str = "alloy", language: str = "") -> Dict[str, Any]:
-    """Generate spoken audio when a configured TTS backend is available."""
-
-    if not text.strip():
-        return {"ok": False, "audio": b"", "mime": "", "ext": "", "note": "No text was provided."}
-    safe_text = redact_personal_data(text)[:8000]
-    if engine == "browser_speech":
-        return {"ok": False, "audio": b"", "mime": "", "ext": "", "note": "Use the browser Speak button. No server audio file is required."}
-    if engine == "openai_tts":
-        if not os.getenv("OPENAI_API_KEY"):
-            return {"ok": False, "audio": b"", "mime": "", "ext": "", "note": "OPENAI_API_KEY is required for OpenAI TTS."}
-        try:
-            from openai import OpenAI
-
-            client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
-            response = client.audio.speech.create(
-                model=os.getenv("OPENAI_TTS_MODEL", "tts-1"),
-                voice=os.getenv("OPENAI_TTS_VOICE", voice or "alloy"),
-                input=safe_text[:4000],
-                response_format="mp3",
-            )
-            audio = getattr(response, "content", None)
-            if audio is None and hasattr(response, "read"):
-                audio = response.read()
-            return {"ok": True, "audio": bytes(audio or b""), "mime": "audio/mpeg", "ext": "mp3", "note": "Generated with OpenAI TTS."}
-        except Exception as exc:
-            return {"ok": False, "audio": b"", "mime": "", "ext": "", "note": f"OpenAI TTS failed: {exc}"}
-    if engine == "edge_tts":
-        try:
-            import asyncio
-            import edge_tts
-
-            async def _run() -> bytes:
-                out = BytesIO()
-                communicate = edge_tts.Communicate(safe_text[:6000], os.getenv("EDGE_TTS_VOICE", "en-IN-NeerjaNeural"))
-                async for chunk in communicate.stream():
-                    if chunk.get("type") == "audio":
-                        out.write(chunk.get("data", b""))
-                return out.getvalue()
-
-            audio = asyncio.run(_run())
-            return {"ok": bool(audio), "audio": audio, "mime": "audio/mpeg", "ext": "mp3", "note": "Generated with Edge TTS." if audio else "Edge TTS returned no audio."}
-        except Exception as exc:
-            return {"ok": False, "audio": b"", "mime": "", "ext": "", "note": f"Edge TTS is not configured: {exc}"}
-    return {"ok": False, "audio": b"", "mime": "", "ext": "", "note": f"TTS engine `{engine}` is selectable but does not generate in-app audio yet. Use its linked external/local tool."}
 
 
 def whatsapp_toolkit(message: str, service_url: str = "", audience: str = "opted-in users") -> Dict[str, Any]:
@@ -1006,26 +948,6 @@ def _image(raw: bytes, name: str) -> str:
         return f"Image extraction failed for {name}: {exc}"
 
 
-def _subtitle(raw: bytes, name: str) -> str:
-    text = _decode(raw).replace("\ufeff", "")
-    blocks = re.split(r"\n\s*\n", text.replace("\r\n", "\n"))
-    rows = []
-    for block in blocks:
-        lines = [line.strip() for line in block.splitlines() if line.strip()]
-        if not lines or lines[0].upper().startswith(("WEBVTT", "NOTE")):
-            continue
-        if lines[0].isdigit():
-            lines = lines[1:]
-        stamp = ""
-        if lines and "-->" in lines[0]:
-            stamp = lines[0].split("-->", 1)[0].strip()
-            lines = lines[1:]
-        clean = " ".join(re.sub(r"<[^>]+>", "", line) for line in lines).strip()
-        if clean:
-            rows.append(f"[{stamp or '00:00:00'}] {clean}")
-    return f"Subtitle transcript from {name}\n" + "\n".join(rows) if rows else text
-
-
 def _text(raw: bytes, name: str, max_pages: int) -> List[Tuple[int, str, str]]:
     ext = Path(name).suffix.lower()
     if ext == ".pdf":
@@ -1034,8 +956,6 @@ def _text(raw: bytes, name: str, max_pages: int) -> List[Tuple[int, str, str]]:
         return [(1, _table(raw, name), "table")]
     if ext in {".png", ".jpg", ".jpeg", ".webp"}:
         return [(1, _image(raw, name), "image")]
-    if ext in {".srt", ".vtt"}:
-        return [(1, _subtitle(raw, name), "transcript")]
     if ext == ".json":
         try:
             return [(1, json.dumps(json.loads(_decode(raw)), indent=2), "text")]
@@ -1164,143 +1084,6 @@ def build_corpus_from_paths(paths: List[Path], max_docs: int = 40, max_pages: in
     return rows, f"Indexed {len(rows)} chunks from {len(paths)} upload(s). " + " ".join(notes)
 
 
-URL_RE = re.compile(r"https?://[^\s<>'\"`{}|\\^]+", re.IGNORECASE)
-
-
-def extract_urls_from_text(text: str) -> List[str]:
-    """Find valid HTTP(S) URLs in free text without preserving trailing punctuation."""
-
-    urls: List[str] = []
-    seen = set()
-    for match in URL_RE.finditer(text or ""):
-        url = match.group(0).strip().rstrip(".,;:!?)]}>\"'")
-        parsed = urlparse(url)
-        if parsed.scheme in {"http", "https"} and parsed.netloc and url not in seen:
-            seen.add(url)
-            urls.append(url)
-    return urls
-
-
-def extract_urls_from_paths(paths: List[Path], max_docs: int = 40, max_pages: int = 20, max_urls: int = 50) -> List[str]:
-    """Extract URLs from uploaded files, including ZIP members and OCR/table text."""
-
-    urls: List[str] = []
-    seen = set()
-    for path in paths:
-        try:
-            for name, raw in _members(path)[:max_docs]:
-                for _, text, _ in _text(raw, name, max_pages):
-                    for url in extract_urls_from_text(text):
-                        if url in seen:
-                            continue
-                        seen.add(url)
-                        urls.append(url)
-                        if len(urls) >= max_urls:
-                            return urls
-        except Exception:
-            continue
-    return urls
-
-
-def youtube_video_id(url: str) -> Optional[str]:
-    parsed = urlparse(url.strip())
-    host = parsed.netloc.lower().removeprefix("www.")
-    if host == "youtu.be":
-        return parsed.path.strip("/").split("/")[0] or None
-    if host.endswith("youtube.com") or host.endswith("youtube-nocookie.com"):
-        qs_id = parse_qs(parsed.query).get("v", [""])[0]
-        if qs_id:
-            return qs_id
-        parts = [p for p in parsed.path.split("/") if p]
-        if len(parts) >= 2 and parts[0] in {"embed", "shorts", "live"}:
-            return parts[1]
-    return None
-
-
-def _stamp(seconds: float) -> str:
-    total = max(0, int(seconds))
-    h, rem = divmod(total, 3600)
-    m, s = divmod(rem, 60)
-    return f"{h:02d}:{m:02d}:{s:02d}" if h else f"{m:02d}:{s:02d}"
-
-
-def _transcript_token_count(text: str) -> int:
-    if os.getenv("TRANSCRIPT_USE_BERT_TOKENIZER", "false").lower() == "true":
-        try:
-            from transformers import BertTokenizer
-
-            tokenizer = BertTokenizer.from_pretrained(os.getenv("TRANSCRIPT_TOKENIZER", "bert-base-uncased"))
-            return len(tokenizer.encode(text, add_special_tokens=False))
-        except Exception:
-            pass
-    return len(re.findall(r"\w+|[^\w\s]", text or ""))
-
-
-def fetch_youtube_transcript(url: str) -> Dict[str, Any]:
-    video_id = youtube_video_id(url)
-    if not video_id:
-        return {"ok": False, "url": url, "video_id": "", "segments": [], "note": "Not a supported YouTube URL."}
-    try:
-        from youtube_transcript_api import YouTubeTranscriptApi
-
-        languages = [x.strip() for x in os.getenv("YOUTUBE_TRANSCRIPT_LANGS", "en,hi,ur").split(",") if x.strip()]
-        try:
-            raw_segments = YouTubeTranscriptApi.get_transcript(video_id, languages=languages)
-        except AttributeError:
-            raw_segments = YouTubeTranscriptApi().fetch(video_id, languages=languages)
-        segments = []
-        for item in raw_segments:
-            if isinstance(item, dict):
-                text_value = item.get("text", "")
-                start_value = item.get("start", 0.0)
-                duration_value = item.get("duration", 0.0)
-            else:
-                text_value = getattr(item, "text", "")
-                start_value = getattr(item, "start", 0.0)
-                duration_value = getattr(item, "duration", 0.0)
-            if text_value:
-                segments.append({"text": re.sub(r"\s+", " ", str(text_value)).strip(), "start": float(start_value or 0), "duration": float(duration_value or 0)})
-        if not segments:
-            return {"ok": False, "url": url, "video_id": video_id, "segments": [], "note": "No public transcript segments were found."}
-        return {"ok": True, "url": url, "video_id": video_id, "segments": segments, "note": f"Fetched {len(segments)} public YouTube transcript segments."}
-    except Exception as exc:
-        return {"ok": False, "url": url, "video_id": video_id, "segments": [], "note": f"YouTube transcript unavailable: {exc}"}
-
-
-def youtube_transcript_chunks(url: str, segments: List[Dict[str, Any]], max_tokens: int = 512) -> List[Dict[str, Any]]:
-    video_id = youtube_video_id(url) or "youtube"
-    chunks: List[Dict[str, Any]] = []
-    buf: List[str] = []
-    tokens = 0
-    start = 0.0
-
-    def flush() -> None:
-        nonlocal buf, tokens, start
-        if not buf:
-            return
-        seconds = int(start)
-        watch = f"https://www.youtube.com/watch?v={video_id}&t={seconds}s"
-        text = f"Timestamp: {_stamp(start)} ({seconds}s)\nWatch: {watch}\nTranscript:\n" + " ".join(buf)
-        chunk = Chunk(f"YouTube transcript {video_id}", text, max(1, seconds), f"Transcript {_stamp(start)}", "transcript")
-        row = asdict(chunk) | {"numbers": chunk.numbers, "video_id": video_id, "start_time": start, "url": watch}
-        chunks.append(row)
-        buf, tokens, start = [], 0, 0.0
-
-    for segment in segments:
-        sentence = str(segment.get("text", "")).strip()
-        if not sentence:
-            continue
-        count = max(1, _transcript_token_count(sentence))
-        if buf and tokens + count > max_tokens:
-            flush()
-        if not buf:
-            start = float(segment.get("start", 0.0) or 0.0)
-        buf.append(sentence)
-        tokens += count
-    flush()
-    return chunks
-
-
 def jurisdiction_policy(jurisdiction: str) -> Dict[str, Any]:
     policies = {
         "India": ["DPDP controls", "lawful purpose/consent", "privacy notice", "security safeguards", "data principal rights"],
@@ -1351,28 +1134,12 @@ def fetch_url_text(url: str, jurisdiction: str = "Global/Unknown", max_bytes: in
 def build_corpus_from_urls(urls: List[str], jurisdiction: str = "Global/Unknown") -> Tuple[List[Dict[str, Any]], str]:
     rows: List[Dict[str, Any]] = []
     notes = []
-    clean_urls: List[str] = []
-    seen = set()
-    for item in urls:
-        candidates = extract_urls_from_text(item) or [item.strip()]
-        for candidate in candidates:
-            if candidate and candidate not in seen:
-                seen.add(candidate)
-                clean_urls.append(candidate)
-    for url in clean_urls[:20]:
-        video_id = youtube_video_id(url)
-        if video_id:
-            fetched_video = fetch_youtube_transcript(url)
-            notes.append(f"{url}: {fetched_video['note']}")
-            if fetched_video["ok"]:
-                rows.extend(youtube_transcript_chunks(url, fetched_video["segments"], int(os.getenv("TRANSCRIPT_MAX_TOKENS", "512"))))
-            continue
-        fetched = fetch_url_text(url, jurisdiction)
+    for url in urls[:20]:
+        fetched = fetch_url_text(url.strip(), jurisdiction)
         notes.append(f"{url}: {fetched['note']}")
         if fetched["ok"]:
             rows.extend(asdict(c) | {"numbers": c.numbers} for c in _chunk(url, 1, fetched["text"], "web"))
-    detail = " ".join(notes[:5])
-    return rows, f"Indexed {len(rows)} compliant web chunks from {len(clean_urls[:20])} URL(s)." + (f" Notes: {detail[:900]}" if detail else "")
+    return rows, f"Indexed {len(rows)} compliant web chunks from {len(urls[:20])} URL(s)."
 
 
 def tavily_search(query: str, max_results: int = 5, topic: str = "general", search_depth: str = "basic") -> Dict[str, Any]:
@@ -1522,10 +1289,8 @@ def ai_policy_scan(profile_name: str = "All", jurisdiction: str = "Global/Unknow
     }
 
 
-def corpus_id(paths: List[Path], extra_sources: Optional[List[str]] = None) -> str:
-    path_bits = [f"{p.name}:{p.stat().st_size if p.exists() else 0}" for p in paths]
-    source_bits = [f"url:{src}" for src in (extra_sources or [])]
-    raw = "|".join(path_bits + source_bits)
+def corpus_id(paths: List[Path]) -> str:
+    raw = "|".join(f"{p.name}:{p.stat().st_size if p.exists() else 0}" for p in paths)
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:16]
 
 
@@ -1560,7 +1325,6 @@ def corpus_metadata(corpus: List[Dict[str, Any]], cid: str = "") -> Dict[str, An
         "mbert_model": os.getenv("MBERT_MODEL", "bert-base-multilingual-cased"),
         "stt_engine": os.getenv("STT_ENGINE", "manual"),
         "transliteration_engine": os.getenv("TRANSLITERATION_ENGINE", "auto_llm"),
-        "response_language": os.getenv("RESPONSE_LANGUAGE", "auto"),
         "compliance_jurisdiction": os.getenv("COMPLIANCE_JURISDICTION", "Global/Unknown"),
         "human_review_confirmed": os.getenv("HUMAN_REVIEW_CONFIRMED", "false"),
         "export_approval_required": os.getenv("REQUIRE_HUMAN_EXPORT_APPROVAL", "true"),
@@ -1677,6 +1441,20 @@ def log_query_pg(cid: str, question: str, answer: str, provider: str, model: str
     conn = pg_conn()
     if conn is None:
         return False
+    try:
+        pg_init(conn)
+        with conn.cursor() as cur:
+            cur.execute(
+                "insert into rag_queries (corpus_id, question, answer, provider, model) values (%s,%s,%s,%s,%s)",
+                (cid, question, answer, provider, model),
+            )
+        conn.commit()
+        conn.close()
+        return True
+    except Exception:
+        conn.rollback()
+        conn.close()
+        return False
 
 
 def upsert_integrations_pg(items: List[Dict[str, str]]) -> bool:
@@ -1754,20 +1532,6 @@ def load_integrations_pg() -> List[Dict[str, str]]:
     except Exception:
         conn.close()
         return []
-    try:
-        pg_init(conn)
-        with conn.cursor() as cur:
-            cur.execute(
-                "insert into rag_queries (corpus_id, question, answer, provider, model) values (%s,%s,%s,%s,%s)",
-                (cid, question, answer, provider, model),
-            )
-        conn.commit()
-        conn.close()
-        return True
-    except Exception:
-        conn.rollback()
-        conn.close()
-        return False
 
 
 def retrieve(corpus: List[Dict[str, Any]], query: str, k: int = 8) -> List[Dict[str, Any]]:
@@ -1797,76 +1561,12 @@ def retrieve(corpus: List[Dict[str, Any]], query: str, k: int = 8) -> List[Dict[
         return sorted(scored, key=lambda x: x["score"], reverse=True)[:k]
 
 
-def sentence_transformer_retrieve(
-    corpus: List[Dict[str, Any]],
-    query: str,
-    k: int = 5,
-    model_name: str = "paraphrase-MiniLM-L6-v2",
-    force: bool = False,
-) -> List[Dict[str, Any]]:
-    """MiniLM semantic retrieval with TF-IDF fallback."""
-
-    if not corpus:
-        return []
-    if not force and os.getenv("ENABLE_MINILM_RETRIEVER", "false").lower() != "true":
-        return retrieve(corpus, query, k)
-    try:
-        import numpy as np
-        from sentence_transformers import SentenceTransformer
-
-        model = SentenceTransformer(os.getenv("MINILM_EMBEDDING_MODEL", model_name))
-        texts = [str(c.get("text", "")) for c in corpus]
-        vectors = model.encode(texts, normalize_embeddings=True)
-        qvec = model.encode([query], normalize_embeddings=True)[0]
-        scores = np.asarray(vectors) @ np.asarray(qvec)
-        order = np.argsort(scores)[::-1][:k]
-        return [dict(corpus[int(i)], score=float(scores[int(i)])) for i in order]
-    except Exception:
-        return retrieve(corpus, query, k)
-
-
-def build_source_context(results: List[Dict[str, Any]], max_chars: int = 1200) -> str:
-    """Build compact source blocks for retrieve-only RAG service contracts."""
-
-    parts = []
-    total = 0
-    for idx, doc in enumerate(results, start=1):
-        block = (
-            f"Source {idx}\n"
-            f"File: {doc.get('source', '')}\n"
-            f"Page: {doc.get('page', 1)}\n"
-            f"Section: {doc.get('section', 'Document')}\n"
-            f"Score: {float(doc.get('score', 0.0)):.4f}\n"
-            "Content:\n"
-            f"{doc.get('text', '')}"
-        ).strip()
-        remaining = max_chars - total
-        if remaining <= 0:
-            break
-        if len(block) > remaining:
-            block = block[:remaining]
-        parts.append(block)
-        total += len(block)
-    return "\n\n---\n\n".join(parts)
-
-
-def retrieve_context(query_text: str, corpus: List[Dict[str, Any]], top_k: int = 5, max_chars: int = 1200) -> Dict[str, Any]:
-    """Retrieve docs and build context without calling an LLM."""
-
-    results = sentence_transformer_retrieve(corpus, query_text, top_k)
-    return {
-        "query": query_text,
-        "results": results,
-        "context": build_source_context(results, max_chars=max_chars),
-        "retriever": "sentence-transformers/paraphrase-MiniLM-L6-v2 with TF-IDF fallback",
-    }
-
-
 def ask_suggestions(corpus: List[Dict[str, Any]], n: int = 8) -> List[str]:
     """Generate simple grounded question suggestions from source sections and numeric evidence."""
 
-    suggestions = []
-    seen = set()
+    summary_suggestion = "Summarizer: summarize the uploaded evidence with citations."
+    suggestions = [summary_suggestion]
+    seen = {summary_suggestion}
     for c in corpus:
         section = str(c.get("section", "Document"))
         source = str(c.get("source", "source"))
@@ -1889,7 +1589,11 @@ def ask_suggestions(corpus: List[Dict[str, Any]], n: int = 8) -> List[str]:
                 seen.add(q)
             if len(suggestions) >= n:
                 return suggestions
-    return suggestions or ["Summarize the uploaded evidence with citations.", "What is not found in the uploaded documents?"]
+    if len(suggestions) < n:
+        fallback = "What is not found in the uploaded documents?"
+        if fallback not in seen:
+            suggestions.append(fallback)
+    return suggestions[:n]
 
 
 def vector_space_knowledge(corpus: List[Dict[str, Any]], query: str = "entire corpus", k: int = 25) -> Dict[str, Any]:
@@ -1915,542 +1619,6 @@ def vector_space_knowledge(corpus: List[Dict[str, Any]], query: str = "entire co
     }
 
 
-def _metric_tokens(text: str) -> List[str]:
-    return re.findall(r"[\w\u0900-\u097F\u0600-\u06FF]+", (text or "").lower())
-
-
-def _ngrams(tokens: List[str], n: int) -> List[Tuple[str, ...]]:
-    return [tuple(tokens[i:i + n]) for i in range(0, max(0, len(tokens) - n + 1))]
-
-
-def _count_overlap(items: List[Tuple[str, ...]], refs: List[Tuple[str, ...]]) -> int:
-    ref_counts: Dict[Tuple[str, ...], int] = {}
-    for item in refs:
-        ref_counts[item] = ref_counts.get(item, 0) + 1
-    overlap = 0
-    for item in items:
-        if ref_counts.get(item, 0) > 0:
-            overlap += 1
-            ref_counts[item] -= 1
-    return overlap
-
-
-def bleu_score(candidate: str, reference: str, max_n: int = 4) -> float:
-    cand = _metric_tokens(candidate)
-    ref = _metric_tokens(reference)
-    if not cand or not ref:
-        return 0.0
-    precisions = []
-    for n in range(1, max_n + 1):
-        cand_grams = _ngrams(cand, n)
-        ref_grams = _ngrams(ref, n)
-        if not cand_grams:
-            precisions.append(0.0)
-            continue
-        # Add-one smoothing avoids zeroing the whole score on short scientific answers.
-        precisions.append((_count_overlap(cand_grams, ref_grams) + 1) / (len(cand_grams) + 1))
-    geo = 1.0
-    for p in precisions:
-        geo *= max(p, 1e-12) ** (1 / max_n)
-    brevity = 1.0 if len(cand) > len(ref) else pow(2.718281828, 1 - (len(ref) / max(len(cand), 1)))
-    return round(float(brevity * geo), 4)
-
-
-def _f1(overlap: int, pred_count: int, ref_count: int) -> float:
-    if not overlap or not pred_count or not ref_count:
-        return 0.0
-    precision = overlap / pred_count
-    recall = overlap / ref_count
-    return (2 * precision * recall) / max(precision + recall, 1e-12)
-
-
-def _lcs_len(a: List[str], b: List[str]) -> int:
-    prev = [0] * (len(b) + 1)
-    for token_a in a:
-        cur = [0]
-        for j, token_b in enumerate(b, start=1):
-            cur.append(prev[j - 1] + 1 if token_a == token_b else max(prev[j], cur[-1]))
-        prev = cur
-    return prev[-1]
-
-
-def rouge_scores(candidate: str, reference: str) -> Dict[str, float]:
-    cand = _metric_tokens(candidate)
-    ref = _metric_tokens(reference)
-    if not cand or not ref:
-        return {"rouge_1_f1": 0.0, "rouge_2_f1": 0.0, "rouge_l_f1": 0.0}
-    c1, r1 = _ngrams(cand, 1), _ngrams(ref, 1)
-    c2, r2 = _ngrams(cand, 2), _ngrams(ref, 2)
-    lcs = _lcs_len(cand, ref)
-    return {
-        "rouge_1_f1": round(_f1(_count_overlap(c1, r1), len(c1), len(r1)), 4),
-        "rouge_2_f1": round(_f1(_count_overlap(c2, r2), len(c2), len(r2)), 4),
-        "rouge_l_f1": round(_f1(lcs, len(cand), len(ref)), 4),
-    }
-
-
-def meteor_score(candidate: str, reference: str) -> float:
-    cand = _metric_tokens(candidate)
-    ref = _metric_tokens(reference)
-    if not cand or not ref:
-        return 0.0
-    ref_positions: Dict[str, List[int]] = {}
-    for idx, token in enumerate(ref):
-        ref_positions.setdefault(token, []).append(idx)
-    matched_positions = []
-    used = set()
-    for token in cand:
-        for pos in ref_positions.get(token, []):
-            if pos not in used:
-                used.add(pos)
-                matched_positions.append(pos)
-                break
-    matches = len(matched_positions)
-    if not matches:
-        return 0.0
-    precision = matches / len(cand)
-    recall = matches / len(ref)
-    fmean = (10 * precision * recall) / max(recall + 9 * precision, 1e-12)
-    chunks = 1
-    for a, b in zip(matched_positions, matched_positions[1:]):
-        if b != a + 1:
-            chunks += 1
-    penalty = 0.5 * ((chunks / matches) ** 3)
-    return round(float(fmean * (1 - penalty)), 4)
-
-
-def lexical_eval_matrix(answer: str, reference: str) -> List[Dict[str, Any]]:
-    rouge = rouge_scores(answer, reference)
-    return [
-        {"metric": "BLEU-4", "value": bleu_score(answer, reference), "reference": "retrieved evidence", "use": "n-gram precision; useful for citation/evidence wording overlap"},
-        {"metric": "ROUGE-1 F1", "value": rouge["rouge_1_f1"], "reference": "retrieved evidence", "use": "unigram overlap with evidence"},
-        {"metric": "ROUGE-2 F1", "value": rouge["rouge_2_f1"], "reference": "retrieved evidence", "use": "phrase overlap with evidence"},
-        {"metric": "ROUGE-L F1", "value": rouge["rouge_l_f1"], "reference": "retrieved evidence", "use": "longest common subsequence with evidence"},
-        {"metric": "METEOR", "value": meteor_score(answer, reference), "reference": "retrieved evidence", "use": "precision/recall balance with fragmentation penalty"},
-    ]
-
-
-def answer_eval_matrix(answer: str, chunks: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-    reference = " ".join(str(c.get("text", "")) for c in chunks[:8])
-    if not answer or not reference:
-        return lexical_eval_matrix(answer or "", reference or "")
-    return lexical_eval_matrix(answer, reference)
-
-
-@dataclass
-class RAGDecision:
-    intent: str
-    product: str = "general"
-    action_type: str = "answer"
-    route: str = "generic_response"
-    confidence: float = 0.55
-    missing_fields: List[str] | None = None
-
-
-@dataclass
-class CustomerInfo:
-    name: str = ""
-    contact: str = ""
-    email: str = ""
-    product: str = "general"
-    consent_confirmed: bool = False
-
-
-@dataclass
-class EMIInput:
-    principal: float = 0.0
-    annual_rate: float = 0.0
-    tenure_months: int = 0
-    product: str = "general"
-
-
-@dataclass
-class LeadPayload:
-    product: str
-    customer: Dict[str, Any]
-    request: str
-    status: str = "draft_human_review_required"
-
-
-@dataclass
-class RAGAnswer:
-    answer: str
-    citations: List[Dict[str, Any]]
-    limitations: List[str]
-    confidence: float = 0.0
-    grounded: bool = True
-
-
-@dataclass
-class ProductAgentResponse:
-    agent: str
-    action_type: str
-    answer: str
-    emi: Dict[str, Any] | None = None
-    lead_payload: Dict[str, Any] | None = None
-    sources: List[Dict[str, Any]] | None = None
-
-
-def relationship_manager_state() -> Dict[str, Any]:
-    return {
-        "state_schema": {
-            "product_workspaces": ["personal_loan", "two_wheeler_loan", "generic"],
-            "shared_state": ["query", "intent", "selected_product", "customer_info", "emi_input", "retrieved_context", "final_response"],
-            "human_top_of_loop": True,
-        },
-        "structured_output_schemas": ["RAGDecision", "RAGAnswer", "ProductAgentResponse", "CustomerInfo", "EMIInput", "LeadPayload"],
-        "module_map": {
-            "offline_document_indexing": ["build_corpus_from_paths", "build_corpus_from_urls", "chunk", "retrieve", "pinecone_upsert", "save_corpus_pg"],
-            "schemas.py": ["RAGDecision", "RAGAnswer", "ProductAgentResponse", "CustomerInfo", "EMIInput", "LeadPayload"],
-            "state/schema.py": ["product_workspaces", "personal_loan", "two_wheeler_loan", "generic", "shared_state"],
-            "graph.py": ["orchestration_manager_plan", "relationship_manager_agent", "relationship_manager_mermaid"],
-            "services/rag.py": ["retrieve", "generate", "answer_eval_matrix"],
-            "services/emi.py": ["calculate_emi_details"],
-            "services/lead.py": ["draft lead payload", "human consent gate"],
-            "agents": ["relationship_manager", "personal_loan_agent", "two_wheeler_loan_agent"],
-        },
-        "product_workspaces": {
-            "personal_loan": {"agent": "personal_loan_agent", "actions": ["collect_customer_info", "calculate_emi", "create_lead", "product_rag"]},
-            "two_wheeler_loan": {"agent": "two_wheeler_loan_agent", "actions": ["collect_customer_info", "calculate_emi", "create_lead", "product_rag"]},
-            "generic": {"agent": "relationship_manager", "actions": ["generic_response", "ask_clarification"]},
-        },
-    }
-
-
-def relationship_manager_mermaid() -> str:
-    return "\n".join(
-        [
-            "flowchart LR",
-            '  SC["Structured Output Schemas\\nRAGDecision + RAGAnswer + ProductAgentResponse\\nCustomerInfo + EMIInput + LeadPayload"] --> RM',
-            '  ST["Shared State\\nproduct_workspaces + current_query + final_response"] --> RM',
-            '  LG["LangGraph-style Orchestrator\\ngraph.py + relationship_manager.py"] --> RM',
-            '  Q["User Query"] --> RM{"Relationship Manager\\nIntent Classification"}',
-            '  IDX["Offline Document Indexing\\nload -> chunk -> embed -> vector upsert"] --> RAG["RAG Retrieval Service"]',
-            '  RM -->|Generic Query| G["Generic Response"]',
-            '  RM -->|Product Info| RAG',
-            '  RAG --> A["RAG Final Answer\\nwith citations"]',
-            '  RM -->|Lead/Application| RA["Route Agent"]',
-            '  RM -->|EMI Calculation| RE["Route EMI"]',
-            '  RM -->|Unclear| C["Ask Clarification"]',
-            '  RA --> SP{"Select Product Agent"}',
-            '  RE --> SP',
-            '  SP --> PL["Personal Loan Agent"]',
-            '  SP --> TW["Two Wheeler Loan Agent"]',
-            '  PL --> CI["Collect Customer Info"]',
-            '  PL --> EMI["Calculate EMI"]',
-            '  PL --> LEAD["Create Lead"]',
-            '  TW --> CI',
-            '  TW --> EMI',
-            '  TW --> LEAD',
-            '  CI --> H["Human Review"]',
-            '  EMI --> H',
-            '  LEAD --> H',
-            '  A --> H',
-            '  H --> F["Final Response"]',
-        ]
-    )
-
-
-def _select_product(query: str) -> str:
-    q = (query or "").lower()
-    if re.search(r"\b(two wheeler|2 wheeler|bike|scooter|motorcycle|vehicle)\b", q):
-        return "two_wheeler_loan"
-    if re.search(r"\b(personal loan|salary loan|unsecured loan|consumer loan)\b", q):
-        return "personal_loan"
-    if re.search(r"\b(loan|emi|interest|tenure|eligibility|application|lead)\b", q):
-        return "personal_loan"
-    return "general"
-
-
-def _relationship_intent(query: str, corpus: List[Dict[str, Any]]) -> RAGDecision:
-    q = (query or "").strip()
-    lower = q.lower()
-    product = _select_product(q)
-    if len(q.split()) < 3:
-        return RAGDecision("unclear", product, "clarify", "ask_clarification", 0.7, ["clear product or question"])
-    if re.search(r"\b(emi|installment|instalment|monthly payment|interest|tenure|down payment)\b", lower):
-        return RAGDecision("emi_calculation", product, "calculate_emi", "route_emi", 0.86, [])
-    if re.search(r"\b(apply|application|lead|call back|callback|contact me|submit|interested|enquiry|inquiry)\b", lower):
-        return RAGDecision("lead_application", product, "create_lead", "route_agent", 0.84, [])
-    if re.search(r"\b(rate|eligibility|documents|required|fees|charges|product|benefit|feature|policy|loan)\b", lower):
-        return RAGDecision("product_information", product, "product_rag", "rag_flow", 0.82 if corpus else 0.62, [])
-    if corpus:
-        return RAGDecision("product_information", product, "product_rag", "rag_flow", 0.68, [])
-    return RAGDecision("generic", product, "answer", "generic_response", 0.58, [])
-
-
-def _money_value(text_value: str) -> float:
-    match = re.search(r"(?:rs\.?|inr|₹)?\s*([0-9][0-9,]*(?:\.\d+)?)\s*(lakh|lac|crore|k)?", text_value, re.I)
-    if not match:
-        return 0.0
-    value = float(match.group(1).replace(",", ""))
-    unit = (match.group(2) or "").lower()
-    if unit in {"lakh", "lac"}:
-        value *= 100_000
-    elif unit == "crore":
-        value *= 10_000_000
-    elif unit == "k":
-        value *= 1_000
-    return value
-
-
-def _rate_value(text_value: str) -> float:
-    match = re.search(r"(\d+(?:\.\d+)?)\s*%", text_value)
-    return float(match.group(1)) if match else 0.0
-
-
-def _tenure_months(text_value: str) -> int:
-    match = re.search(r"(\d+)\s*(months?|mo|yrs?|years?)", text_value, re.I)
-    if not match:
-        return 0
-    value = int(match.group(1))
-    unit = match.group(2).lower()
-    return value * 12 if unit.startswith(("yr", "year")) else value
-
-
-def calculate_emi_details(emi: EMIInput) -> Dict[str, Any]:
-    missing = []
-    if emi.principal <= 0:
-        missing.append("loan amount")
-    if emi.annual_rate <= 0:
-        missing.append("annual interest rate")
-    if emi.tenure_months <= 0:
-        missing.append("tenure in months or years")
-    if missing:
-        return {"ok": False, "missing_fields": missing, "note": "Provide amount, annual rate, and tenure for EMI calculation."}
-    monthly_rate = emi.annual_rate / (12 * 100)
-    if monthly_rate == 0:
-        monthly_emi = emi.principal / emi.tenure_months
-    else:
-        factor = (1 + monthly_rate) ** emi.tenure_months
-        monthly_emi = emi.principal * monthly_rate * factor / (factor - 1)
-    total = monthly_emi * emi.tenure_months
-    return {
-        "ok": True,
-        "product": emi.product,
-        "principal": round(emi.principal, 2),
-        "annual_rate_percent": round(emi.annual_rate, 3),
-        "tenure_months": emi.tenure_months,
-        "monthly_emi": round(monthly_emi, 2),
-        "total_payment": round(total, 2),
-        "total_interest": round(total - emi.principal, 2),
-        "formula": "P*r*(1+r)^n / ((1+r)^n - 1), where r = annual_rate/12/100",
-        "human_review": "Indicative estimate only; verify bank/NBFC terms, fees, taxes, eligibility, and sanctioned rate.",
-    }
-
-
-def _customer_info(query: str, product: str) -> CustomerInfo:
-    name_match = re.search(r"\b(?:name is|i am|my name is)\s+([A-Za-z .]{2,60})", query, re.I)
-    contact_match = re.search(INDIAN_PII_PATTERNS["phone"], query)
-    email_match = re.search(INDIAN_PII_PATTERNS["email"], query, re.I)
-    consent = bool(re.search(r"\b(consent|agree|permission|call me|contact me|opt in|opt-in)\b", query, re.I))
-    return CustomerInfo(
-        name=(name_match.group(1).strip(" .") if name_match else ""),
-        contact=(contact_match.group(0) if contact_match else ""),
-        email=(email_match.group(0) if email_match else ""),
-        product=product,
-        consent_confirmed=consent,
-    )
-
-
-def _lead_payload(query: str, product: str) -> Dict[str, Any]:
-    customer = _customer_info(query, product)
-    missing = []
-    if not customer.name:
-        missing.append("name")
-    if not (customer.contact or customer.email):
-        missing.append("phone or email")
-    if not customer.consent_confirmed:
-        missing.append("explicit consent to contact")
-    payload = LeadPayload(product=product, customer=asdict(customer), request=query)
-    out = asdict(payload)
-    out["missing_fields"] = missing
-    out["ready_to_submit"] = not missing
-    out["privacy_note"] = "Draft only. Human must confirm lawful basis/consent before export, CRM entry, WhatsApp, or outbound call."
-    return out
-
-
-def relationship_manager_agent(query: str, corpus: List[Dict[str, Any]], provider: str = "local") -> Dict[str, Any]:
-    decision = _relationship_intent(query, corpus)
-    state = relationship_manager_state()
-    product = decision.product
-    selected_agent = state["product_workspaces"].get(product, state["product_workspaces"]["generic"])["agent"]
-    retrieval_packet = retrieve_context(query or product, corpus, top_k=8, max_chars=1400) if corpus else {"query": query, "results": [], "context": "", "retriever": "none"}
-    hits = retrieval_packet["results"]
-    answer = ""
-    emi_details: Dict[str, Any] | None = None
-    lead: Dict[str, Any] | None = None
-    rag_answer = RAGAnswer(answer="", citations=[], limitations=[], confidence=decision.confidence, grounded=bool(hits) or decision.route != "rag_flow")
-
-    if decision.route == "ask_clarification":
-        answer = "Please clarify the product and task. Example: ask product information, calculate EMI with amount/rate/tenure, or create a lead with consent."
-    elif decision.route == "route_emi":
-        emi = EMIInput(_money_value(query), _rate_value(query), _tenure_months(query), product)
-        emi_details = calculate_emi_details(emi)
-        if emi_details.get("ok"):
-            answer = (
-                f"Indicative EMI for `{product}`: **₹{emi_details['monthly_emi']:,.2f}/month** for "
-                f"₹{emi_details['principal']:,.2f} at {emi_details['annual_rate_percent']}% for {emi_details['tenure_months']} months. "
-                f"Total interest: ₹{emi_details['total_interest']:,.2f}. Human review is required before financial use."
-            )
-        else:
-            answer = "I need " + ", ".join(emi_details.get("missing_fields", [])) + " to calculate EMI."
-    elif decision.route == "route_agent":
-        lead = _lead_payload(query, product)
-        if lead["ready_to_submit"]:
-            safe_customer = dict(lead["customer"])
-            safe_customer["contact"] = redact_personal_data(str(safe_customer.get("contact", "")))
-            safe_customer["email"] = redact_personal_data(str(safe_customer.get("email", "")))
-            answer = f"Draft lead created for `{product}`. Human review and lawful consent confirmation are required before submission. Customer: {safe_customer}."
-        else:
-            answer = "To create a compliant lead, please provide: " + ", ".join(lead["missing_fields"]) + "."
-    elif decision.route == "rag_flow":
-        if hits:
-            rag = generate(query, hits, external=False)
-            answer = rag["answer"]
-            provider = rag.get("provider", provider)
-            rag_answer = RAGAnswer(
-                answer=answer,
-                citations=[
-                    {
-                        "source": h.get("source"),
-                        "page": h.get("page"),
-                        "section": h.get("section"),
-                        "kind": h.get("kind"),
-                        "score": round(float(h.get("score", 0.0)), 4),
-                    }
-                    for h in hits[:8]
-                ],
-                limitations=["Use only uploaded product evidence.", "Human review required before financial or customer-contact use."],
-                confidence=decision.confidence,
-                grounded=True,
-            )
-        else:
-            answer = "No product evidence is indexed yet. Upload policy/product documents or permitted URLs first."
-            rag_answer = RAGAnswer(answer=answer, citations=[], limitations=["No indexed product evidence."], confidence=0.0, grounded=False)
-    else:
-        answer = "I can help with product information, EMI calculation, application lead capture, or clarification. Upload evidence for grounded product answers."
-
-    response = ProductAgentResponse(
-        agent=selected_agent,
-        action_type=decision.action_type,
-        answer=answer,
-        emi=emi_details,
-        lead_payload=lead,
-        sources=hits,
-    )
-    return {
-        "decision": asdict(decision),
-        "state": state,
-        "retrieval_packet": retrieval_packet,
-        "rag_answer": asdict(rag_answer),
-        "product_agent_response": asdict(response),
-        "answer": answer,
-        "sources": hits,
-        "eval_matrix": answer_eval_matrix(answer, hits),
-        "architecture": relationship_manager_mermaid(),
-        "provider": provider,
-        "model": "relationship-manager-structured-router",
-        "human_review": "Human remains final authority over financial advice, lead creation, export, messaging, and customer contact.",
-    }
-
-
-def agent_metrics_session(
-    query: str,
-    corpus: List[Dict[str, Any]],
-    provider: str = "local",
-    retrieval_engine: str = "TF-IDF",
-    jurisdiction: str = "India",
-) -> Dict[str, Any]:
-    """Course-inspired metrics view for RAG, API, feedback, and MCP readiness."""
-
-    hits = retrieve(corpus, query or "metrics rag api mcp", 10)
-    source_count = len({str(c.get("source", "")) for c in corpus if c.get("source")})
-    table_chunks = sum(1 for c in corpus if c.get("kind") == "table")
-    media_chunks = sum(1 for c in corpus if str(c.get("kind", "")) in {"image", "ocr", "media"})
-    numeric_chunks = sum(1 for c in corpus if c.get("numbers"))
-    total_chars = sum(len(str(c.get("text", ""))) for c in corpus)
-    top_score = round(float(hits[0].get("score", 0.0)), 4) if hits else 0.0
-    citation_ready = bool(hits and source_count)
-    table_aware = table_chunks > 0 or any("|" in str(h.get("text", "")) for h in hits)
-    has_api_keys = any(os.getenv(k) for k in ["OPENAI_API_KEY", "OPENROUTER_API_KEY", "HF_TOKEN", "GOOGLE_API_KEY", "GROK_API_KEY", "ANTHROPIC_API_KEY"])
-    has_storage = bool(os.getenv("DATABASE_URL") or os.getenv("PINECONE_API_KEY") or os.getenv("SUPABASE_URL"))
-    reference_text = " ".join(str(h.get("text", "")) for h in hits[:8])
-    baseline_answer = _local_answer(query or "metrics rag api mcp", hits)
-    eval_matrix = lexical_eval_matrix(baseline_answer, reference_text)
-    metrics = [
-        {"metric": "Corpus chunks", "value": len(corpus), "target": ">= 1 for document RAG", "status": "ok" if corpus else "needs evidence"},
-        {"metric": "Unique sources", "value": source_count, "target": ">= 1 cited source", "status": "ok" if source_count else "needs sources"},
-        {"metric": "Top retrieval score", "value": top_score, "target": "higher is better", "status": "ok" if top_score > 0 else "review"},
-        {"metric": "Numeric chunks", "value": numeric_chunks, "target": "detect numerical evidence", "status": "ok" if numeric_chunks else "not found"},
-        {"metric": "Table chunks", "value": table_chunks, "target": "preserve structure", "status": "ok" if table_aware else "not found"},
-        {"metric": "Media/OCR chunks", "value": media_chunks, "target": "image/pdf evidence support", "status": "ok" if media_chunks else "optional"},
-        {"metric": "Average chunk chars", "value": round(total_chars / max(len(corpus), 1), 1), "target": "section-aware, not arbitrary 1000-char split", "status": "ok"},
-        {"metric": "API key readiness", "value": "configured" if has_api_keys else "local only", "target": "optional external LLM/API integration", "status": "ok" if has_api_keys else "local"},
-        {"metric": "Vector/storage readiness", "value": "configured" if has_storage else "local only", "target": "Postgres/Pinecone/Supabase", "status": "ok" if has_storage else "local"},
-        {"metric": "BLEU/ROUGE/METEOR matrix", "value": "computed", "target": "lexical answer-vs-evidence evaluation", "status": "ok" if hits else "needs evidence"},
-    ]
-    gates = [
-        {"gate": "Grounding", "check": "Every model claim must cite retrieved source/page/section.", "status": "ready" if citation_ready else "blocked until evidence is uploaded"},
-        {"gate": "Tables and numbers", "check": "Preserve tables, units, denominators, totals, and numerical context.", "status": "ready" if numeric_chunks or table_aware else "watch"},
-        {"gate": "Planner -> executor -> verifier", "check": "Route complex queries through agent pipeline and verification.", "status": "ready"},
-        {"gate": "Feedback loop", "check": "Capture thumbs up/down and comments for later eval tuning.", "status": "ready through monitoring.py"},
-        {"gate": "API integration", "check": "Keep provider keys secret-backed and route calls through approved adapters.", "status": "ready" if has_api_keys else "local-only mode"},
-        {"gate": "MCP server readiness", "check": "Expose typed tools/resources after metrics prove stable behavior.", "status": "planned"},
-        {"gate": "Human authority", "check": "Human remains final approver for exports, cloud use, and external actions.", "status": "required"},
-    ]
-    api_plan = [
-        "Keep the Streamlit chat as the human-facing shell; keep orchestration inside the pipeline.",
-        "Expose one internal API boundary per capability: retrieve, answer, quiz, website, visual map, compliance, feedback.",
-        "Use provider adapters for OpenAI/OpenRouter/Hugging Face/Gemini/Grok/Ollama/custom endpoints without showing stored keys.",
-        "Log latency, source count, retrieval mode, top score, table/numeric hit counts, and user feedback.",
-        "Run LangSmith/eval datasets only when keys are configured; otherwise keep JSONL metrics local.",
-    ]
-    mcp_plan = [
-        {"tool": "retrieve_evidence", "input": "query, top_k, corpus_id", "output": "ranked chunks with citations"},
-        {"tool": "answer_grounded", "input": "query, provider, retrieval_mode", "output": "answer, citations, limitations"},
-        {"tool": "create_quiz", "input": "exam, topic, difficulty, count", "output": "items, answer key, remarks"},
-        {"tool": "build_website", "input": "brief, brand, evidence_ids", "output": "html, seo, critic notes"},
-        {"tool": "visual_map", "input": "query, style, top_k", "output": "svg, mermaid, outline"},
-        {"tool": "log_feedback", "input": "question, answer, rating, comment", "output": "stored feedback event"},
-        {"resource": "corpus_metadata", "input": "corpus_id", "output": "sources, sections, chunks, privacy metadata"},
-    ]
-    evidence = [
-        {
-            "source": h.get("source"),
-            "page": h.get("page"),
-            "section": h.get("section"),
-            "kind": h.get("kind"),
-            "score": round(float(h.get("score", 0.0)), 4),
-            "snippet": str(h.get("text", ""))[:280],
-        }
-        for h in hits[:6]
-    ]
-    markdown = (
-        "# Metrics, RAG/API, and MCP Readiness\n\n"
-        "Sameer's session insight is implemented as a practical loop: measure retrieval and answer quality first, "
-        "then integrate agents with RAG/APIs, then expose stable capabilities through an MCP server.\n\n"
-        "## Immediate Priority\n\n"
-        "1. Metrics are the operating dashboard for the whole course project.\n"
-        "2. RAG + API integration must stay grounded, secret-safe, and observable.\n"
-        "3. MCP server work should expose only stable, typed tools after feedback and eval checks.\n\n"
-        "BLEU, ROUGE, and METEOR are included as lexical evidence-overlap metrics. They are useful signals, "
-        "not a replacement for citation checking, human review, or factual verification.\n\n"
-        f"**Provider:** {provider}  \n"
-        f"**Retrieval:** {retrieval_engine}  \n"
-        f"**Jurisdiction:** {jurisdiction}\n"
-    )
-    return {
-        "markdown": markdown,
-        "metrics": metrics,
-        "lexical_eval_matrix": eval_matrix,
-        "quality_gates": gates,
-        "rag_api_plan": api_plan,
-        "mcp_server_plan": mcp_plan,
-        "top_evidence": evidence,
-    }
-
-
 def orchestration_manager_plan(
     query: str,
     corpus: List[Dict[str, Any]],
@@ -2470,8 +1638,7 @@ def orchestration_manager_plan(
     rationale = "General evidence-grounded request; use planner, retriever, executor, verifier."
 
     rules = [
-        ("Metrics", ["metrics", "metric", "eval", "evaluation", "observability", "monitoring", "feedback loop", "langsmith", "wandb", "evidently", "rag api", "rag and api", "mcp", "mcp server", "next session", "course"], "Metrics/course insight detected; inspect RAG quality, API readiness, feedback loop, and MCP server plan."),
-        ("Relationship manager", ["relationship manager", "personal loan", "two wheeler", "bike loan", "scooter loan", "emi", "loan application", "loan lead", "eligibility", "interest rate"], "Product/loan relationship-manager intent detected; classify and route to RAG, EMI, lead, or clarification path."),
+        ("Summarizer", ["summarize", "summarise", "summary", "summarizer", "summariser", "summerizer", "summerize", "summeriser"], "Summary intent detected; create a grounded summary with citations and limitations."),
         ("School clerk", ["school clerk", "clerk", "result", "marksheet", "mark sheet", "report card", "attendance", "fee reminder", "bonafide", "transfer certificate", "tc", "admission register", "roll list"], "School-office automation intent detected; use clerk workflow with result generation and human review."),
         ("Study quiz", ["quiz", "exam", "question paper", "mcq", "flashcard", "physics wallah", "textbook", "student"], "Study/exam intent detected; generate grounded learning items."),
         ("Visual maps", ["mindmap", "mind map", "flowchart", "flow chart", "concept map", "visual", "diagram", "graphic"], "Visual explanation requested; create evidence maps and Mermaid/SVG outputs."),
@@ -3558,14 +2725,120 @@ def marketing_plan(query: str, corpus: List[Dict[str, Any]], integrations: List[
     )
 
 
+SUMMARY_RE = re.compile(r"\b(summarize|summarise|summary|summarizer|summariser|summerizer|summerize|overview|abstract|key points|tl;dr)\b", re.I)
+
+
+def is_summary_request(question: str) -> bool:
+    return bool(SUMMARY_RE.search(question or ""))
+
+
+def _source_ref(chunk: Dict[str, Any]) -> str:
+    return f"`{chunk.get('source', 'source')}` p.{chunk.get('page', 1)} [{chunk.get('section', 'Document')}]"
+
+
+def _clean_snippet(text: Any, limit: int = 360) -> str:
+    cleaned = re.sub(r"\s+", " ", str(text or "")).strip()
+    if len(cleaned) <= limit:
+        return cleaned
+    return cleaned[: limit - 3].rstrip() + "..."
+
+
+def _best_sentences(text: str, max_items: int = 2) -> List[str]:
+    sentences = [s.strip() for s in re.split(r"(?<=[.!?])\s+|\n+", text or "") if len(s.strip()) >= 40]
+    if not sentences and text:
+        sentences = [_clean_snippet(text, 260)]
+    scored = []
+    for sentence in sentences:
+        score = 0
+        score += 2 if re.search(r"\d", sentence) else 0
+        score += 2 if re.search(r"\b(result|finding|method|conclusion|objective|impact|limit|risk|benefit|table|figure)\b", sentence, re.I) else 0
+        score += min(len(sentence), 240) / 240
+        scored.append((score, sentence))
+    return [_clean_snippet(sentence, 300) for _, sentence in sorted(scored, key=lambda x: x[0], reverse=True)[:max_items]]
+
+
+def _summary_chunks(corpus: List[Dict[str, Any]], k: int = 10) -> List[Dict[str, Any]]:
+    if not corpus:
+        return []
+    selected: List[Dict[str, Any]] = []
+    seen_sources = set()
+    for chunk in corpus:
+        source = str(chunk.get("source", "source"))
+        if source not in seen_sources:
+            selected.append(dict(chunk))
+            seen_sources.add(source)
+        if len(selected) >= k:
+            return selected[:k]
+    ranked = sorted(
+        corpus,
+        key=lambda c: (
+            len(c.get("numbers") or []),
+            len(str(c.get("section", ""))),
+            min(len(str(c.get("text", ""))), 2000),
+        ),
+        reverse=True,
+    )
+    for chunk in ranked:
+        marker = (chunk.get("source"), chunk.get("page"), chunk.get("section"), str(chunk.get("text", ""))[:80])
+        selected_markers = {(c.get("source"), c.get("page"), c.get("section"), str(c.get("text", ""))[:80]) for c in selected}
+        if marker not in selected_markers:
+            selected.append(dict(chunk))
+        if len(selected) >= k:
+            break
+    return selected[:k]
+
+
+def _local_summary(question: str, chunks: List[Dict[str, Any]]) -> str:
+    if not chunks:
+        return "No uploaded evidence is indexed yet. Upload a document, paste a permitted URL, or enable live search before summarizing."
+
+    sources: Dict[str, int] = {}
+    sections: Dict[str, int] = {}
+    key_points: List[str] = []
+    important_numbers: List[str] = []
+    for chunk in chunks:
+        sources[str(chunk.get("source", "source"))] = sources.get(str(chunk.get("source", "source")), 0) + 1
+        sections[str(chunk.get("section", "Document"))] = sections.get(str(chunk.get("section", "Document")), 0) + 1
+        important_numbers.extend(str(n) for n in (chunk.get("numbers") or [])[:4])
+        for sentence in _best_sentences(str(chunk.get("text", "")), 2):
+            item = f"- {sentence} ({_source_ref(chunk)})"
+            if item not in key_points:
+                key_points.append(item)
+            if len(key_points) >= 8:
+                break
+        if len(key_points) >= 8:
+            break
+
+    source_list = ", ".join(f"{name} ({count} chunk{'s' if count != 1 else ''})" for name, count in list(sources.items())[:8])
+    section_list = ", ".join(list(sections.keys())[:8])
+    number_line = ", ".join(dict.fromkeys(important_numbers[:20]))
+
+    return (
+        "### Summary\n\n"
+        f"I found **{len(chunks)} relevant evidence chunk(s)** across **{len(sources)} source(s)**. "
+        f"The main covered section(s) are: {section_list or 'Document'}.\n\n"
+        "### Key Points\n\n"
+        + ("\n".join(key_points) if key_points else "- The uploaded evidence did not contain enough readable text to summarize.")
+        + "\n\n### Important Values\n\n"
+        + (f"{number_line}\n\n" if number_line else "No prominent numeric values were detected in the selected evidence.\n\n")
+        + "### Sources Covered\n\n"
+        + (source_list or "No source metadata available.")
+        + "\n\n### Limitations\n\n"
+        "This summary is grounded only in uploaded or permitted evidence. Missing pages, unreadable OCR, or unindexed files are not summarized."
+    )
+
+
 def _local_answer(question: str, chunks: List[Dict[str, Any]]) -> str:
+    if is_summary_request(question):
+        return _local_summary(question, chunks)
     if not chunks:
         return "I could not find relevant evidence in the uploaded documents."
-    bullets = [f"- `{c['source']}` p.{c['page']} [{c['section']}]: {c['text'][:520]}" for c in chunks[:6]]
+    bullets = [f"- {_clean_snippet(c['text'], 520)} ({_source_ref(c)})" for c in chunks[:6]]
+    direct = "\n".join(f"- {_clean_snippet(sentence, 260)} ({_source_ref(c)})" for c in chunks[:3] for sentence in _best_sentences(str(c.get("text", "")), 1))
     return (
-        "### Evidence-grounded scientific answer\n\n"
-        "Interpret this only from the uploaded evidence below. I do not infer beyond it, fabricate values, or convert uncertainty into certainty.\n\n"
-        "### Retrieved evidence\n\n" + "\n".join(bullets) +
+        "### Answer\n\n"
+        + (direct or "The retrieved evidence is shown below; no stronger direct answer is supported.")
+        + "\n\n### Retrieved Evidence\n\n" + "\n".join(bullets) +
         "\n\n### Limitations\n\nIf a required value, method, figure, table, or structural comparison is absent above, it is not supported by the uploaded corpus."
     )
 
@@ -3589,6 +2862,13 @@ def _grounding_guard(answer: str, chunks: List[Dict[str, Any]]) -> str:
         "### Limitation\n\n"
         "A final answer is not supported unless each claim can be tied to the uploaded sources above."
     )
+
+
+def _guard_generated_answer(question: str, answer: str, chunks: List[Dict[str, Any]]) -> str:
+    guarded = _grounding_guard(answer, chunks)
+    if is_summary_request(question) and "did not include enough explicit source citations" in guarded:
+        return _local_summary(question, chunks)
+    return guarded
 
 
 def _message_role(role: str) -> str:
@@ -3689,50 +2969,6 @@ def transliteration_instruction(question: str, context: str, provider: str, key:
     return ""
 
 
-RESPONSE_LANGUAGE_OPTIONS = {
-    "auto": "the user's language; if unclear, use English",
-    "english": "English",
-    "hindi": "Hindi in Devanagari script",
-    "urdu": "Urdu in Urdu/Nastaliq script",
-    "arabic": "Arabic",
-    "bengali": "Bengali",
-    "tamil": "Tamil",
-    "telugu": "Telugu",
-    "marathi": "Marathi in Devanagari script",
-    "gujarati": "Gujarati",
-    "punjabi": "Punjabi in Gurmukhi script",
-    "french": "French",
-    "spanish": "Spanish",
-    "german": "German",
-}
-
-
-def response_language_instruction(question: str) -> str:
-    configured = os.getenv("RESPONSE_LANGUAGE", "auto").lower().strip()
-    q = (question or "").lower()
-    if configured == "auto":
-        if re.search(r"\b(hindi|हिंदी|हिन्दी|देवनागरी|हिंदी में|hindi me)\b", q):
-            configured = "hindi"
-        elif re.search(r"\b(urdu|اردو)\b", q):
-            configured = "urdu"
-        elif re.search(r"\b(arabic|عربي|العربية)\b", q):
-            configured = "arabic"
-        elif re.search(r"\b(english|अंग्रेजी|अंग्रेज़ी)\b", q):
-            configured = "english"
-    target = RESPONSE_LANGUAGE_OPTIONS.get(configured, os.getenv("RESPONSE_LANGUAGE", "auto"))
-    if configured == "auto":
-        return (
-            "Response language rule: answer in the user's language when clear; otherwise use English. "
-            "This is translation, not transliteration."
-        )
-    return (
-        f"Response language rule: translate the final answer into {target}. "
-        "Keep source citations, filenames, page numbers, section labels, numeric values, names, and quoted evidence exact. "
-        "Do not translate source filenames or citations. If a source phrase is important, show translated meaning and keep the original phrase in parentheses. "
-        "This is semantic translation of the answer, not mere transliteration."
-    )
-
-
 def _llm_select_workflow(
     query: str,
     actions: List[str],
@@ -3828,19 +3064,15 @@ def generate(question: str, chunks: List[Dict[str, Any]], external: bool = False
     safe_chunks = redacted_chunks(chunks) if provider != "local" else chunks
     context = format_context(safe_chunks)
     translit_rule = transliteration_instruction(question, context, provider, key)
-    lang_rule = response_language_instruction(question)
     rule = (
         "You are a scientific RAG assistant with strict research temperament. Use only uploaded-document evidence. Do not use memory, assumptions, or outside knowledge. Every factual claim must cite source filename and page/section from the evidence. Preserve units, numeric values, denominators, sample sizes, protein/gene names, methods, table/figure context, uncertainty, OCR text, transliteration uncertainty, and citations. Separate observation from interpretation. Do not overclaim causality, novelty, safety, clinical relevance, or statistical significance unless the evidence states it. If evidence is insufficient, answer: 'Not found in uploaded documents' and list the missing evidence."
         if not external else
         "You are a scientific RAG assistant with strict research temperament. Use uploaded evidence first. Every document-supported claim must cite source filename and page/section. Label any outside/open-source knowledge separately and never mix it with document-supported claims. Mark transliteration as approximate unless directly supported by OCR text. Do not overclaim causality, safety, clinical relevance, or statistical significance."
     )
-    rule += "\n\n" + lang_rule
     if translit_rule:
         rule += "\n\n" + translit_rule
     if provider == "local" or not key:
         answer = _local_answer(question, chunks)
-        if os.getenv("RESPONSE_LANGUAGE", "auto").lower() not in {"auto", "english"} or re.search(r"\b(hindi|urdu|arabic|translate|अनुवाद|हिंदी|اردو)\b", question or "", re.I):
-            answer += "\n\nTranslation note: semantic translation requires an approved LLM provider. The local fallback preserves retrieved evidence in its original language."
         if translit_rule and _has_non_latin(f"{question}\n{context}"):
             answer += "\n\nTransliteration note: automatic LLM transliteration was requested, but no approved LLM provider/key is active. Original script is preserved."
         return {"answer": answer, "provider": "local", "model": "evidence-only"}
@@ -3851,7 +3083,7 @@ def generate(question: str, chunks: List[Dict[str, Any]], external: bool = False
             genai.configure(api_key=key)
             msg = "\n\n".join(f"{m['role'].upper()}:\n{m['content']}" for m in router_messages(rule, question, context, history))
             out = genai.GenerativeModel(model).generate_content(msg)
-            return {"answer": _grounding_guard(getattr(out, "text", "") or "", chunks), "provider": provider, "model": model}
+            return {"answer": _guard_generated_answer(question, getattr(out, "text", "") or "", chunks), "provider": provider, "model": model}
         except Exception as exc:
             return {"answer": _local_answer(question, chunks) + f"\n\nProvider failed: {exc}", "provider": "local", "model": "fallback"}
     if provider == "claude":
@@ -3872,7 +3104,7 @@ def generate(question: str, chunks: List[Dict[str, Any]], external: bool = False
             with urlopen(req, timeout=45) as resp:
                 data = json.loads(resp.read(2_000_000).decode("utf-8"))
             text = "\n".join(part.get("text", "") for part in data.get("content", []) if part.get("type") == "text")
-            return {"answer": _grounding_guard(text, chunks), "provider": provider, "model": model}
+            return {"answer": _guard_generated_answer(question, text, chunks), "provider": provider, "model": model}
         except Exception as exc:
             return {"answer": _local_answer(question, chunks) + f"\n\nProvider failed: {exc}", "provider": "local", "model": "fallback"}
     try:
@@ -3880,7 +3112,7 @@ def generate(question: str, chunks: List[Dict[str, Any]], external: bool = False
 
         client = OpenAI(api_key=key, base_url=base_url or None)
         out = client.chat.completions.create(model=model, messages=router_messages(rule, question, context, history), temperature=0.0)
-        return {"answer": _grounding_guard(out.choices[0].message.content or "", chunks), "provider": provider, "model": model}
+        return {"answer": _guard_generated_answer(question, out.choices[0].message.content or "", chunks), "provider": provider, "model": model}
     except Exception as exc:
         return {"answer": _local_answer(question, chunks) + f"\n\nProvider failed: {exc}", "provider": "local", "model": "fallback"}
 
@@ -3897,14 +3129,26 @@ async def answer_rag_chat(
 ) -> Dict[str, Any]:
     if provider:
         os.environ["LLM_PROVIDER"] = provider
-    if retrieval_engine == "openai_embeddings":
-        hits = embedding_retrieve(corpus, question, top_k)
-    elif retrieval_engine == "minilm":
-        hits = sentence_transformer_retrieve(corpus, question, top_k)
+    if is_summary_request(question):
+        hits = _summary_chunks(corpus, top_k)
     else:
-        hits = retrieve(corpus, question, top_k)
+        hits = embedding_retrieve(corpus, question, top_k) if retrieval_engine == "openai_embeddings" else retrieve(corpus, question, top_k)
     ans = generate(question, hits, allow_external_knowledge, history)
-    return {"answer": ans["answer"], "sources": hits, "latency_s": 0.0, "langchain_document_count": len(hits), "eval_matrix": answer_eval_matrix(ans["answer"], hits), **ans}
+    return {"answer": ans["answer"], "sources": hits, "latency_s": 0.0, "langchain_document_count": len(hits), **ans}
+
+
+async def summarize_corpus(
+    corpus: List[Dict[str, Any]],
+    question: str = "Summarize the uploaded evidence with citations.",
+    provider: Optional[str] = None,
+    top_k: int = 10,
+) -> Dict[str, Any]:
+    if provider:
+        os.environ["LLM_PROVIDER"] = provider
+    prompt = question if is_summary_request(question) else f"Summarize the uploaded evidence with citations.\n\nUser focus: {question}"
+    hits = _summary_chunks(corpus, top_k)
+    ans = generate(prompt, hits)
+    return {"answer": ans["answer"], "sources": hits, "latency_s": 0.0, "langchain_document_count": len(hits), **ans}
 
 
 async def answer_with_agent_pipeline_from_corpus(
@@ -3923,7 +3167,7 @@ async def answer_with_agent_pipeline_from_corpus(
     hits = retrieve(corpus, question, 8)
     ans = generate(question, hits)
     turns.append({"agent": "verifier", "message": "Check that the answer cites retrieved evidence.", "payload": {"sources": len(hits)}})
-    return {"answer": ans["answer"], "sources": hits, "conversation": turns, "latency_s": 0.0, "eval_matrix": answer_eval_matrix(ans["answer"], hits), **ans}
+    return {"answer": ans["answer"], "sources": hits, "conversation": turns, "latency_s": 0.0, **ans}
 
 
 async def run_multi_agent(goal: str, provider: Optional[str] = None, data_zip: Optional[Path] = None, max_docs: int = 40, max_pages: int = 20, max_iterations: int = 3) -> Dict[str, Any]:
