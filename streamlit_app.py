@@ -3,17 +3,21 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import os
+import re
 import tempfile
 from html import escape
 from pathlib import Path
 from typing import Any, Dict, List
+from urllib.parse import urlparse
 
 import streamlit as st
 import streamlit.components.v1 as components
 
 from multi_agent import (
+    advanced_strategy_pack,
     ai_policy_profiles,
     ai_policy_scan,
     answer_rag_chat,
@@ -40,27 +44,25 @@ from multi_agent import (
     media_inventory,
     mermaid_mindmap,
     needs_live_search,
-    ocr_model_options,
-    ocr_language_options,
     orchestration_manager_plan,
     pinecone_retrieve,
     pinecone_upsert,
     render_template,
     retrieve,
+    retrieve_auto,
     save_corpus_pg,
     school_clerk_automation,
-    speech_to_text_options,
     study_quiz_items,
     study_quiz_generator,
     summarize_corpus,
     supabase_log_metadata,
     swarm_initial_state,
     swarm_mermaid,
+    storage_backends_status,
     template_options,
     text_to_speech_options,
     toolbox_catalog,
     transcribe_audio,
-    transliteration_options,
     tts_guidance,
     update_swarm_feedback,
     upsert_integrations_pg,
@@ -273,6 +275,30 @@ def render_sources(sources: List[Dict[str, Any]], label: str = "Sources") -> Non
         st.text(format_context(sources, max_chars=14000))
 
 
+def render_summary_mindmap(pack: Dict[str, Any] | None) -> None:
+    if not pack:
+        return
+    st.subheader("Summary mindmap")
+    tabs = st.tabs(["Graphic", "Mermaid", "Evidence"])
+    with tabs[0]:
+        if pack.get("svg"):
+            components.html(pack["svg"], height=620, scrolling=True)
+        else:
+            st.caption("No graphic mindmap is available for this summary.")
+    with tabs[1]:
+        if pack.get("mermaid"):
+            render_mermaid(pack["mermaid"], height=560)
+            st.code(pack["mermaid"], language="mermaid")
+        else:
+            st.caption("No Mermaid mindmap is available for this summary.")
+    with tabs[2]:
+        outline = pack.get("outline", [])
+        if outline:
+            st.dataframe(outline, use_container_width=True)
+        else:
+            st.caption("No evidence nodes are available for this summary.")
+
+
 def apply_provider(choice: Dict[str, str]) -> str:
     provider = choice["provider"]
     if provider == "openrouter":
@@ -297,6 +323,72 @@ def apply_provider(choice: Dict[str, str]) -> str:
         os.environ["GROK_MODEL"] = choice["model"]
     os.environ["LLM_PROVIDER"] = provider
     return provider
+
+
+def env_flag(name: str, default: bool = False) -> bool:
+    value = os.getenv(name)
+    if value is None:
+        return default
+    return value.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def parse_url_box(value: str) -> List[str]:
+    tokens = re.split(r"[\s,;]+", value or "")
+    urls: List[str] = []
+    seen = set()
+    for token in tokens:
+        cleaned = token.strip().strip("()[]{}<>\"'")
+        if not cleaned:
+            continue
+        if not re.match(r"^https?://", cleaned, re.I) and re.match(r"^[A-Za-z0-9.-]+\.[A-Za-z]{2,}(/.*)?$", cleaned):
+            cleaned = "https://" + cleaned
+        parsed = urlparse(cleaned)
+        if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+            continue
+        normalized = cleaned.rstrip(".,;")
+        if normalized not in seen:
+            urls.append(normalized)
+            seen.add(normalized)
+    return urls[:20]
+
+
+def session_corpus_id(paths: List[Path], urls: List[str]) -> str:
+    if paths:
+        base = corpus_id(paths)
+    else:
+        base = "session"
+    if not urls:
+        return base
+    digest = hashlib.sha256("|".join(urls).encode("utf-8")).hexdigest()[:12]
+    return f"{base}-{digest}"
+
+
+def apply_hidden_provider() -> str:
+    rows = llm_model_catalog(os.getenv("MAS_EXTRA_LLMS", ""))
+    preferred_provider = os.getenv("LLM_PROVIDER", "local").lower()
+    provider_model_env = {
+        "custom": "CUSTOM_LLM_MODEL",
+        "gemini": "GEMINI_MODEL",
+        "grok": "GROK_MODEL",
+        "huggingface": "HF_MODEL",
+        "ollama": "OLLAMA_MODEL",
+        "openai": "OPENAI_MODEL",
+        "openrouter": "OPENROUTER_MODEL",
+    }
+    preferred_model = os.getenv("LLM_MODEL") or os.getenv(provider_model_env.get(preferred_provider, ""), "")
+    preferred_model = preferred_model.strip()
+    fallback = next((row for row in rows if row.get("provider") == "local"), rows[0])
+    matches = [
+        row
+        for row in rows
+        if row.get("provider", "").lower() == preferred_provider
+        and (not preferred_model or row.get("model") == preferred_model or row.get("label") == preferred_model)
+    ]
+    selected = matches[0] if matches else fallback
+    key_env = selected.get("key_env", "")
+    if selected.get("requires_key") == "yes" and key_env and not os.getenv(key_env):
+        selected = fallback
+    return apply_provider(selected)
 
 
 def render_live_exam() -> None:
@@ -407,7 +499,7 @@ st.markdown(
     """
 <div class="hero">
   <h1>Scientific RAG Studio</h1>
-  <div class="muted">Evidence-grounded chat, live search, builders, templates, swarm governance, and human approval in one focused interface.</div>
+  <div class="muted">Evidence-grounded chat, live search, builders, templates, SWARN structure orchestration, and human approval in one focused interface.</div>
 </div>
 """,
     unsafe_allow_html=True,
@@ -422,60 +514,20 @@ with st.sidebar:
     )
     local_path = st.text_input("Local path")
     urls = st.text_area("URLs", placeholder="https://example.org/page")
-    jurisdiction = st.selectbox("Jurisdiction", ["India", "EU/EEA", "California", "UK", "Global/Unknown"])
+    jurisdiction = os.getenv("COMPLIANCE_JURISDICTION", "India")
     os.environ["COMPLIANCE_JURISDICTION"] = jurisdiction
-    fetch_ok = st.checkbox("I confirm URL fetching is lawful and robots.txt/site terms permit it")
-    use_tavily = st.checkbox("Use Tavily live search when needed")
-    st.caption("Tavily: configured" if os.getenv("TAVILY_API_KEY") else "Tavily: add TAVILY_API_KEY in Streamlit secrets")
+    fetch_ok = env_flag("MAS_URL_FETCH_OK", True)
+    use_tavily = bool(os.getenv("TAVILY_API_KEY")) and env_flag("MAS_TAVILY_ENABLED", True)
+    provider = apply_hidden_provider()
 
-    st.divider()
-    with st.expander("Model", expanded=False):
-        extra_models = st.text_area("Extra LLMs", placeholder="Label, provider, model, base_url, key_env")
-        llm_rows = llm_model_catalog(extra_models)
-        free_rows = [m for m in llm_rows if m.get("requires_key") == "no"]
-        paid_rows = [m for m in llm_rows if m not in free_rows]
-        model_group = st.radio("Model group", ["Free / no key", "Paid / key required"], horizontal=False)
-        active_rows = free_rows if model_group.startswith("Free") else paid_rows
-        llm_choice = st.selectbox("LLM model", [m["label"] for m in active_rows])
-        selected_llm = active_rows[[m["label"] for m in active_rows].index(llm_choice)]
-        provider = apply_provider(selected_llm)
-        key_env = selected_llm.get("key_env", "")
-        if model_group.startswith("Paid") and key_env:
-            pasted_key = st.text_input(f"Key for {key_env}", os.getenv(key_env, ""), type="password")
-            if pasted_key:
-                os.environ[key_env] = pasted_key
-            if os.getenv(key_env):
-                st.caption(f"{key_env}: key loaded")
-        else:
-            st.caption("Selected model does not require a key.")
-
-        with st.expander("Custom OpenAI-compatible endpoint"):
-            os.environ["OLLAMA_BASE_URL"] = st.text_input("Ollama base URL", os.getenv("OLLAMA_BASE_URL", "http://localhost:11434/v1"))
-            os.environ["OLLAMA_MODEL"] = st.text_input("Ollama model", os.getenv("OLLAMA_MODEL", "llama3.1"))
-            os.environ["CUSTOM_LLM_BASE_URL"] = st.text_input("Custom base URL", os.getenv("CUSTOM_LLM_BASE_URL", ""))
-            os.environ["CUSTOM_LLM_MODEL"] = st.text_input("Custom model", os.getenv("CUSTOM_LLM_MODEL", ""))
-            custom_key_env = st.text_input("Custom key env", os.getenv("CUSTOM_LLM_API_KEY_ENV", "CUSTOM_LLM_API_KEY"))
-            os.environ["CUSTOM_LLM_API_KEY_ENV"] = custom_key_env
-
-    with st.expander("Retrieval and input processing", expanded=False):
-        retrieval = st.selectbox("Retrieval", ["TF-IDF", "OpenAI text-embedding-3-large", "Pinecone"])
-        chunking = st.selectbox("Chunking", ["section_semantic", "mbert"], help="mBERT uses bert-base-multilingual-cased if transformers/torch are installed.")
-        os.environ["CHUNKING_ENGINE"] = chunking
-        ocr = st.selectbox("OCR", [f"{m['label']} | {m['pricing']}" for m in ocr_model_options()])
-        os.environ["OCR_ENGINE"] = ocr_model_options()[[f"{m['label']} | {m['pricing']}" for m in ocr_model_options()].index(ocr)]["engine"]
-        lang_rows = ocr_language_options()
-        default_lang = next((i for i, row in enumerate(lang_rows) if row["code"] == os.getenv("OCR_LANG", "eng")), 1)
-        lang_choice = st.selectbox("OCR language", [f"{row['label']} ({row['code']})" for row in lang_rows], index=default_lang)
-        lang_row = lang_rows[[f"{row['label']} ({row['code']})" for row in lang_rows].index(lang_choice)]
-        os.environ["OCR_LANG"] = st.text_input("Custom OCR code", os.getenv("OCR_LANG", "eng+hin+urd")) if lang_row["code"] == "custom" else lang_row["code"]
-        trans_rows = transliteration_options()
-        trans_choice = st.selectbox("Transliteration engine", [m["label"] for m in trans_rows], index=0)
-        os.environ["TRANSLITERATION_ENGINE"] = trans_rows[[m["label"] for m in trans_rows].index(trans_choice)]["engine"]
-        st.caption("Transliteration uses the selected NLP/LLM adapter when available; otherwise original script is preserved.")
-        stt = st.selectbox("Speech to text", [m["label"] for m in speech_to_text_options()])
-        os.environ["STT_ENGINE"] = speech_to_text_options()[[m["label"] for m in speech_to_text_options()].index(stt)]["engine"]
-        auto_mic_run = st.checkbox("Auto-run mic to smart task", value=True)
-        top_k = st.slider("Evidence", 3, 15, 8)
+    retrieval = "Auto orchestrator"
+    top_k = int(os.getenv("MAS_EVIDENCE_DEPTH", "8"))
+    auto_mic_run = os.getenv("MAS_AUTO_MIC_RUN", "true").lower() == "true"
+    os.environ.setdefault("CHUNKING_ENGINE", "section_semantic")
+    os.environ.setdefault("OCR_ENGINE", "tesseract")
+    os.environ.setdefault("OCR_LANG", "eng+hin+urd")
+    os.environ.setdefault("TRANSLITERATION_ENGINE", "auto_llm")
+    os.environ.setdefault("STT_ENGINE", "manual")
 
     with st.expander("Privacy and approval", expanded=False):
         lawful = st.checkbox("Lawful basis/consent for personal data")
@@ -487,35 +539,31 @@ with st.sidebar:
         os.environ["REQUIRE_HUMAN_EXPORT_APPROVAL"] = str(st.checkbox("Require approval before export", value=True)).lower()
 
 paths = [save_upload(f) for f in uploads] if uploads else ([Path(local_path)] if local_path else [])
-web_urls = [u.strip() for u in urls.splitlines() if u.strip()] if fetch_ok else []
+web_urls = parse_url_box(urls) if fetch_ok else []
 with st.spinner("Indexing evidence..."):
     corpus, summary = build_corpus_from_paths(paths) if paths else ([], "No files.")
     if web_urls:
         web_corpus, web_summary = build_corpus_from_urls(web_urls, jurisdiction)
         corpus.extend(web_corpus)
         summary += " " + web_summary
-    cid = corpus_id(paths)
+    cid = session_corpus_id(paths, web_urls)
     if corpus:
         save_corpus_pg(corpus, cid)
 
 metadata = corpus_metadata(corpus, cid)
 supabase_log_metadata(metadata)
-if retrieval == "Pinecone" and corpus:
-    st.caption("Pinecone: indexed" if pinecone_upsert(corpus, cid) else "Pinecone: not configured or indexing failed")
+if corpus and os.getenv("PINECONE_API_KEY") and os.getenv("PINECONE_INDEX") and os.getenv("OPENAI_API_KEY"):
+    pinecone_upsert(corpus, cid)
 st.caption(summary)
 with st.expander("Session status", expanded=False):
-    status_cols = st.columns(4)
+    status_cols = st.columns(2)
     status_cols[0].metric("Chunks", len(corpus))
     status_cols[1].metric("Sources", metadata.get("source_count", 0))
-    status_cols[2].metric("Provider", provider)
-    status_cols[3].metric("Jurisdiction", jurisdiction)
 st.markdown(
     "".join(
         [
             f'<span class="chip {"ok" if os.getenv("HUMAN_REVIEW_CONFIRMED") == "true" else "danger"}">Human review {"on" if os.getenv("HUMAN_REVIEW_CONFIRMED") == "true" else "pending"}</span>',
             f'<span class="chip {"ok" if os.getenv("DPDP_REDACT") == "true" else "danger"}">Redaction {os.getenv("DPDP_REDACT")}</span>',
-            f'<span class="chip">OCR {os.getenv("OCR_ENGINE", "tesseract")}</span>',
-            f'<span class="chip">STT {os.getenv("STT_ENGINE", "manual")}</span>',
         ]
     ),
     unsafe_allow_html=True,
@@ -530,11 +578,13 @@ WORKFLOWS = [
     "Agent chat",
     "Ask suggestions",
     "Vector knowledge",
+    "Naya search",
     "Live search",
     "Ingest latest updates",
     "AI policy scan",
     "School clerk",
     "Study quiz",
+    "Advanced strategies",
     "Website",
     "App blueprint",
     "Codex workflow",
@@ -546,22 +596,40 @@ WORKFLOWS = [
     "Mindmap",
     "Visual maps",
     "Integrations",
-    "Swarm",
+    "SWARN architecture",
     "Toolbox",
     "Compliance",
     "Metadata",
 ]
 action = "Smart auto"
-with st.expander("Advanced manual workflow", expanded=False):
-    if st.checkbox("Choose a workflow manually"):
-        action = st.selectbox("Workflow", WORKFLOWS)
+suggested_action = st.session_state.get("suggested_action", "")
+if suggested_action in WORKFLOWS:
+    action = suggested_action
+
+admin_unlocked = os.getenv("MAS_ADMIN_MODE", "false").lower() == "true"
+with st.expander("Admin routing override", expanded=False):
+    admin_pin_expected = os.getenv("MAS_ADMIN_PIN") or os.getenv("ADMIN_PIN")
+    if admin_pin_expected:
+        admin_pin = st.text_input("Admin PIN", type="password")
+        admin_unlocked = admin_unlocked or admin_pin == admin_pin_expected
+    if admin_unlocked:
+        if st.checkbox("Admin manually chooses workflow"):
+            action = st.selectbox("Workflow", WORKFLOWS)
+            st.session_state["suggested_action"] = action
+        elif suggested_action:
+            st.caption(f"Queued suggested workflow: {suggested_action}. Clear it to return to smart auto.")
+            if st.button("Clear suggested workflow"):
+                st.session_state.pop("suggested_action", None)
+                st.rerun()
     else:
-        st.caption("Smart routing is active. The app selects the required tool from the query, mic transcript, uploaded files, and URLs.")
+        st.caption("Smart routing is active. Manual workflow selection is available only after admin unlock. Use suggestions below for human-in-loop steering.")
 
 if st.session_state.get("pending_brief_text"):
     st.session_state["brief_text"] = st.session_state.pop("pending_brief_text")
 st.markdown("### Ask")
 brief = st.text_area("Brief / query", height=120, placeholder="Ask or describe what you want.", key="brief_text")
+if web_urls and not brief.strip():
+    brief = "Summarizer: summarize the linked URL evidence and extract implementation-ready actions with citations."
 
 with st.container():
     st.markdown('<div class="compact-suggestions">', unsafe_allow_html=True)
@@ -576,6 +644,52 @@ with st.container():
             st.session_state["pending_brief_text"] = q
             st.rerun()
     st.markdown("</div>", unsafe_allow_html=True)
+
+suggested_workflows = [
+    ("Agent chat", "Let the agent council plan, retrieve, answer, verify, and show its human-visible trace."),
+    ("SWARN architecture", "View supervisor-led workflow, agent, retrieval, reasoning, and next-action orchestration."),
+    ("Advanced strategies", "Generate retrieval-ready chunking, guardrail, evaluation, and failure-mode artifacts."),
+    ("Summarizer", "Create a grounded summary with citations and a mindmap."),
+    ("Vector knowledge", "Inspect the evidence space while the backend is chosen automatically."),
+    ("Ask suggestions", "Generate useful questions from the indexed evidence."),
+    ("Naya search", "Search latest/new evidence when Tavily is configured, otherwise show what is needed."),
+    ("Compliance", "Review privacy, consent, redaction, and jurisdiction guardrails."),
+    ("Ingest latest updates", "Collect latest snippets and persist to configured PostgreSQL/Pinecone stores."),
+    ("Toolbox", "Check tools, packages, databases, LLMs, and integration readiness."),
+    ("Metadata", "Inspect corpus, source, provider, and storage metadata."),
+]
+workflow_help = dict(suggested_workflows)
+workflow_labels = ["Smart auto"] + [workflow for workflow, _ in suggested_workflows]
+quick_index = workflow_labels.index(suggested_action) if suggested_action in workflow_labels else 0
+with st.expander("Quick workflow", expanded=True):
+    q1, q2, q3 = st.columns([5, 1.4, 1.2])
+    quick_choice = q1.selectbox(
+        "Workflow",
+        workflow_labels,
+        index=quick_index,
+        help="Use Smart auto for normal routing, or choose a specific suggested workflow.",
+    )
+    if q2.button("Apply", use_container_width=True):
+        if quick_choice == "Smart auto":
+            st.session_state.pop("suggested_action", None)
+        else:
+            st.session_state["suggested_action"] = quick_choice
+            if not st.session_state.get("brief_text"):
+                st.session_state["pending_brief_text"] = workflow_help.get(quick_choice, "")
+        st.rerun()
+    if suggested_action and q3.button("Clear", use_container_width=True):
+        st.session_state.pop("suggested_action", None)
+        st.rerun()
+    if suggested_action:
+        st.caption(f"Queued: {suggested_action}. Press Run, or choose Smart auto and Apply.")
+    else:
+        st.caption("Smart auto is active. Choose a workflow only when you want to steer the orchestrator.")
+    with st.expander("Workflow guide", expanded=False):
+        st.dataframe(
+            [{"workflow": workflow, "use": help_text} for workflow, help_text in suggested_workflows],
+            use_container_width=True,
+            hide_index=True,
+        )
 
 with st.expander("Voice and extra files", expanded=False):
     c1, c2 = st.columns(2)
@@ -605,7 +719,7 @@ with st.expander("Voice and extra files", expanded=False):
             st.session_state["pending_auto_run"] = True
         st.rerun()
 
-if use_tavily and brief and (action == "Live search" or needs_live_search(brief)):
+if use_tavily and brief and (action in {"Live search", "Naya search", "Ingest latest updates"} or needs_live_search(brief)):
     with st.spinner("Adding Tavily live evidence..."):
         live_corpus, live_summary = build_corpus_from_tavily(brief, max_results=5)
         corpus.extend(live_corpus)
@@ -614,11 +728,8 @@ if use_tavily and brief and (action == "Live search" or needs_live_search(brief)
         st.caption(live_summary)
 
 with st.expander("Evidence preview", expanded=False):
-    if retrieval == "Pinecone":
-        hits = pinecone_retrieve(corpus, brief or "summary", top_k, cid)
-    else:
-        hits = embedding_retrieve(corpus, brief or "summary", top_k) if corpus and retrieval.startswith("OpenAI") else retrieve(corpus, brief or "summary", top_k)
-    st.text(format_context(hits) if hits else "No indexed evidence yet. Enable Tavily live search or upload documents for grounded evidence.")
+    hits, preview_retrieval = retrieve_auto(corpus, brief or "summary", top_k, cid, requested=retrieval, provider=provider)
+    st.text(format_context(hits) if hits else "No indexed evidence yet. Paste URLs or upload documents for grounded evidence.")
 
 quiz_active = action == "Study quiz" and bool(st.session_state.get("live_exam"))
 auto_run = bool(st.session_state.pop("pending_auto_run", False))
@@ -628,29 +739,39 @@ if auto_run:
 if not run and not quiz_active:
     st.stop()
 
-manager_plan: Dict[str, Any] | None = None
+manager_plan: Dict[str, Any] | None = orchestration_manager_plan(
+    brief,
+    corpus,
+    provider=provider,
+    retrieval_engine=retrieval,
+    live_search_enabled=use_tavily,
+    jurisdiction=jurisdiction,
+)
 if action == "Smart auto":
-    manager_plan = orchestration_manager_plan(
-        brief,
-        corpus,
-        provider=provider,
-        retrieval_engine=retrieval,
-        live_search_enabled=use_tavily,
-        jurisdiction=jurisdiction,
-    )
-    with st.expander("Routing audit", expanded=False):
-        st.metric("Selected workflow", manager_plan["selected_action"])
-        st.metric("Confidence", f"{int(manager_plan['confidence'] * 100)}%")
-        st.caption(manager_plan["rationale"])
-        st.caption(f"Routing mode: {manager_plan.get('routing_mode', 'rule-based')}")
-        st.dataframe(manager_plan["agents"], use_container_width=True)
-        st.dataframe(manager_plan["tools"], use_container_width=True)
-        st.json(manager_plan["evidence_state"])
     action = manager_plan["selected_action"]
+else:
+    manager_plan["selected_action"] = action
+    manager_plan["rationale"] = f"Human selected the suggested workflow `{action}`; orchestrator still chooses tools, backend, and guardrails."
+    manager_plan["confidence"] = max(float(manager_plan.get("confidence", 0.75)), 0.75)
+
+with st.expander("Human-visible routing audit", expanded=False):
+    st.metric("Selected workflow", manager_plan["selected_action"])
+    st.metric("Confidence", f"{int(manager_plan['confidence'] * 100)}%")
+    st.caption(manager_plan["rationale"])
+    st.caption(f"Routing mode: {manager_plan.get('routing_mode', 'rule-based')}")
+    st.dataframe(manager_plan["agents"], use_container_width=True)
+    visible_tools = manager_plan["tools"] if admin_unlocked else [row for row in manager_plan["tools"] if row.get("tool") != "retrieval"]
+    st.dataframe(visible_tools, use_container_width=True)
+    if admin_unlocked:
+        with st.expander("Admin technical routing details", expanded=False):
+            st.caption(f"Retrieval: {manager_plan['retrieval_decision']['engine']} - {manager_plan['retrieval_decision']['reason']}")
+            st.dataframe(manager_plan.get("storage_backends", []), use_container_width=True)
+            st.dataframe(manager_plan.get("integration_hints", []), use_container_width=True)
+            st.json(manager_plan["evidence_state"])
 
 if action == "Chat":
     if not corpus and not use_tavily:
-        result = {"answer": "Live chat is available, but no evidence is indexed. Upload documents or enable Tavily live search for grounded answers.", "sources": [], "provider": "local", "model": "no-evidence"}
+        result = {"answer": "Live chat is available, but no evidence is indexed. Upload documents or configure latest search for grounded answers.", "sources": [], "provider": "local", "model": "no-evidence"}
     else:
         result = asyncio.run(
             answer_rag_chat(
@@ -658,7 +779,7 @@ if action == "Chat":
                 corpus,
                 provider=provider,
                 top_k=top_k,
-                retrieval_engine="openai_embeddings" if retrieval in {"OpenAI text-embedding-3-large", "Pinecone"} else "tfidf",
+                retrieval_engine=retrieval,
             )
         )
     render_conversation(brief, result["answer"], f"{result.get('provider', provider)} · {result.get('model', '')}")
@@ -668,20 +789,25 @@ if action == "Chat":
 
 elif action == "Summarizer":
     if not corpus and not use_tavily:
-        result = {"answer": "No indexed evidence is available yet. Upload a document, paste a permitted URL, or enable Tavily live search before summarizing.", "sources": [], "provider": "local", "model": "no-evidence"}
+        result = {"answer": "No indexed evidence is available yet. Upload a document, paste a permitted URL, or configure latest search before summarizing.", "sources": [], "provider": "local", "model": "no-evidence"}
     else:
         result = asyncio.run(summarize_corpus(corpus, brief or "Summarize the uploaded evidence with citations.", provider=provider, top_k=top_k))
     render_conversation(brief or "Summarize the uploaded evidence", result["answer"], f"{result.get('provider', provider)} · {result.get('model', '')}")
+    render_summary_mindmap(result.get("mindmap"))
     render_sources(result.get("sources", []), "Summary evidence")
     log_query_pg(cid, brief or "Summarize", result["answer"], result.get("provider", ""), result.get("model", ""))
     show_download("summary", json.dumps(result, indent=2), "summary.json", "application/json")
 
 elif action == "Agent chat":
     result = asyncio.run(answer_with_agent_pipeline_from_corpus(brief, corpus, summary, provider))
-    render_conversation(brief, result["answer"], f"{result.get('provider', provider)} · planner → executor → verifier")
+    render_conversation(brief, result["answer"], f"{result.get('provider', provider)} · SWARN/hybrid")
     render_sources(result.get("sources", []), "Retrieved evidence")
-    with st.expander("Agent trace", expanded=False):
+    with st.expander("Human-visible agent council", expanded=True):
+        st.caption("This is the SWARN agent conversation for human supervision. It is not a normal-user workflow selector.")
         st.json(result.get("conversation", []))
+    with st.expander("SWARN structure orchestration", expanded=False):
+        render_mermaid(result.get("swarn_mermaid", result.get("swarm_mermaid", swarm_mermaid(swarm_initial_state()))))
+        st.json(result.get("swarn_state", result.get("swarm_state", {})))
     show_download("agent answer", json.dumps(result, indent=2), "agent_answer.json", "application/json")
 
 elif action == "Ask suggestions":
@@ -692,6 +818,10 @@ elif action == "Ask suggestions":
 elif action == "Vector knowledge":
     out = vector_space_knowledge(corpus, brief or "entire corpus", k=25)
     render_conversation(brief, "I reviewed the indexed evidence space. Open the panels below for source coverage, top evidence, and suggested questions.", "Vector knowledge")
+    if admin_unlocked:
+        with st.expander("Admin backend routing details", expanded=False):
+            st.json(out.get("retrieval_decision", {}))
+            st.dataframe(out.get("storage_backends", []), use_container_width=True)
     with st.expander("Coverage summary", expanded=True):
         st.json(out["summary"])
     render_sources(out["top_evidence"], "Top evidence")
@@ -699,27 +829,35 @@ elif action == "Vector knowledge":
         st.markdown("\n".join(f"- {q}" for q in out["suggested_questions"]))
     show_download("vector knowledge", json.dumps(out, indent=2), "vector_knowledge.json", "application/json")
 
-elif action == "Live search":
+elif action in {"Live search", "Naya search"}:
+    if not os.getenv("TAVILY_API_KEY"):
+        st.warning("Naya/latest search is present but needs TAVILY_API_KEY in Streamlit secrets or environment to fetch fresh web snippets.")
+    elif not use_tavily:
+        st.info("Naya/latest search is available, but it is disabled by deployment configuration.")
     out = vector_space_knowledge(corpus, brief or "live search", k=25)
-    render_conversation(brief, "Live/permitted evidence has been collected and indexed. Open the evidence panel to inspect the retrieved snippets.", "Live search evidence")
+    render_conversation(brief, "Naya/latest or permitted evidence has been routed through the knowledge layer. Open the panels below to inspect what was retrieved.", action)
+    if admin_unlocked:
+        with st.expander("Admin Naya backend details", expanded=False):
+            st.json(out.get("retrieval_decision", {}))
+            st.dataframe(out.get("storage_backends", []), use_container_width=True)
     with st.expander("Coverage summary", expanded=True):
         st.json(out["summary"])
     render_sources(out["top_evidence"], "Live evidence")
-    show_download("live search evidence", json.dumps(out, indent=2), "live_search_evidence.json", "application/json")
+    show_download("naya search evidence", json.dumps(out, indent=2), "naya_search_evidence.json", "application/json")
 
 elif action == "Ingest latest updates":
-    st.warning("This uses Tavily live search only when configured. It stores snippets, not unrestricted scraped pages.")
+    st.warning("This uses configured latest-search connectors. It stores snippets, not unrestricted scraped pages.")
+    st.caption("The orchestrator stores updates only in configured, available stores.")
     namespace = st.text_input("Update corpus / namespace", "latest_updates")
     max_results = st.slider("Live results", 3, 10, 8)
-    save_pg = st.checkbox("Store in PostgreSQL", value=True)
-    save_pc = st.checkbox("Store in Pinecone", value=True)
-    permitted_urls = [u.strip() for u in urls.splitlines() if u.strip()] if fetch_ok else []
+    save_pg = bool(os.getenv("DATABASE_URL"))
+    save_pc = bool(os.getenv("PINECONE_API_KEY") and os.getenv("PINECONE_INDEX") and os.getenv("OPENAI_API_KEY"))
     out = ingest_latest_updates(
         brief or "latest updates",
         corpus_id_value=namespace,
         max_results=max_results,
         jurisdiction=jurisdiction,
-        urls=permitted_urls,
+        urls=web_urls,
         store_postgres=save_pg,
         store_pinecone=save_pc,
     )
@@ -773,6 +911,43 @@ elif action == "Study quiz":
 
     if live_mode and st.session_state.get("live_exam"):
         render_live_exam()
+
+elif action == "Advanced strategies":
+    out = advanced_strategy_pack(brief, corpus)
+    st.markdown(out["report"])
+    c1, c2, c3 = st.columns(3)
+    c1.metric("Strategy areas", len(out["strategies"]))
+    c2.metric("Eval rows", len(out["evaluation_rows"]))
+    c3.metric("Source chunks", len(out["sources"]))
+    tabs = st.tabs(["Readiness", "Tokenizer", "Retrieval", "Chunking", "Evaluation", "Guardrails", "Failure modes", "Mindmap"])
+    with tabs[0]:
+        st.dataframe(out["readiness"], use_container_width=True)
+        st.json(out["content_type_estimate"])
+    with tabs[1]:
+        st.dataframe(out["tokenizer_diagnostics"], use_container_width=True)
+    with tabs[2]:
+        st.dataframe(out["retrieval_experiment"], use_container_width=True)
+    with tabs[3]:
+        st.dataframe(out["chunking_experiment"], use_container_width=True)
+    with tabs[4]:
+        st.json(out["evaluation_run"]["summary"])
+        st.dataframe(out["evaluation_run"]["rows"], use_container_width=True)
+        st.dataframe(out["evaluation_rows"], use_container_width=True)
+        show_download("evaluation csv", out["evaluation_csv"], "evaluation_results_starter.csv", "text/csv")
+        show_download("evaluation run csv", out["evaluation_run"]["csv"], "evaluation_results_autoscored.csv", "text/csv")
+    with tabs[5]:
+        st.code(out["guardrail_prompt"], language="text")
+        show_download("guardrail prompt", out["guardrail_prompt"], "grounding_prompt.txt", "text/plain")
+    with tabs[6]:
+        st.markdown(out["failure_modes_md"])
+        show_download("failure modes", out["failure_modes_md"], "failure_modes.md", "text/markdown")
+    with tabs[7]:
+        components.html(out["mindmap"]["svg"], height=640, scrolling=True)
+        with st.expander("Mermaid"):
+            render_mermaid(out["mindmap"]["mermaid"], height=520)
+            st.code(out["mindmap"]["mermaid"], language="mermaid")
+    render_sources(out.get("sources", []), "Strategy source evidence")
+    show_download("advanced strategy packet", json.dumps(out, indent=2), "advanced_strategy_pack.json", "application/json")
 
 elif action == "Website":
     page = build_website(brief, corpus, "Evidence Studio", "Evidence-grounded publication")
@@ -885,27 +1060,36 @@ elif action == "Integrations":
     st.dataframe(out, use_container_width=True)
     show_download("integrations", json.dumps(out, indent=2), "integrations.json", "application/json")
 
-elif action == "Swarm":
-    if "swarm_state" not in st.session_state:
-        st.session_state["swarm_state"] = swarm_initial_state()
-    state = st.session_state["swarm_state"]
-    topology = st.selectbox("Topology", state["available_topologies"])
+elif action in {"SWARN architecture", "Swarm"}:
+    if "swarn_state" not in st.session_state:
+        st.session_state["swarn_state"] = st.session_state.get("swarm_state", swarm_initial_state())
+    state = st.session_state["swarn_state"]
+    st.markdown("### SWARN Structure Orchestration")
+    st.caption("Supervisor -> Workflow -> Agent Network -> Retrieval/Reasoning -> Next Action. Human approval remains above every node.")
+    topology = st.selectbox("SWARN topology", state["available_topologies"])
     state["topology"] = topology
     st.markdown(f"```mermaid\n{swarm_mermaid(state, topology)}\n```")
+    with st.expander("SWARN architecture layers", expanded=True):
+        st.dataframe(state.get("architecture", []), use_container_width=True)
     agent = st.selectbox("Agent", [a["name"] for a in state["agents"]])
     c1, c2 = st.columns(2)
     if c1.button("Positive feedback"):
-        st.session_state["swarm_state"] = update_swarm_feedback(state, agent, "positive")
+        st.session_state["swarn_state"] = update_swarm_feedback(state, agent, "positive")
         st.rerun()
     if c2.button("Negative feedback"):
-        st.session_state["swarm_state"] = update_swarm_feedback(state, agent, "negative")
+        st.session_state["swarn_state"] = update_swarm_feedback(state, agent, "negative")
         st.rerun()
-    st.dataframe(st.session_state["swarm_state"]["agents"], use_container_width=True)
-    show_download("swarm", json.dumps(st.session_state["swarm_state"], indent=2), "swarm_state.json", "application/json")
+    st.dataframe(st.session_state["swarn_state"]["agents"], use_container_width=True)
+    show_download("SWARN architecture", json.dumps(st.session_state["swarn_state"], indent=2), "swarn_architecture.json", "application/json")
 
 elif action == "Toolbox":
     out = toolbox_catalog()
     st.dataframe(out, use_container_width=True)
+    with st.expander("Integration registry", expanded=False):
+        st.dataframe(integration_registry(), use_container_width=True)
+    if admin_unlocked:
+        with st.expander("Admin backend status", expanded=False):
+            st.dataframe(storage_backends_status(), use_container_width=True)
     show_download("toolbox", json.dumps(out, indent=2), "toolbox_catalog.json", "application/json")
 
 elif action == "Compliance":
@@ -914,5 +1098,11 @@ elif action == "Compliance":
     show_download("compliance", json.dumps(out, indent=2), "compliance_report.json", "application/json")
 
 else:
-    st.json(metadata)
-    show_download("metadata", json.dumps(metadata, indent=2), "metadata.json", "application/json")
+    metadata_packet = {
+        **metadata,
+        "orchestrator": manager_plan,
+        "storage_backends": storage_backends_status(),
+        "integrations": integration_registry(include_pg=False)[:20],
+    }
+    st.json(metadata_packet)
+    show_download("metadata", json.dumps(metadata_packet, indent=2), "metadata.json", "application/json")
