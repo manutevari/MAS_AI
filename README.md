@@ -26,6 +26,9 @@ Core capabilities:
 - India DPDP plus international compliance controls
 - human-in-the-loop approvals, metadata exports, and swarm governance
 - hidden smart router that sends mic/text/doc/URL queries to the right agent and tool workflow
+- Skill Manager agent for dynamic tool/skill discovery, capability matrix auditing, package checks, and skill selection rules
+- Researcher agent for evidence-grounded scientific literature synthesis, quantitative extraction, hypothesis evaluation, and uncertainty tracking
+- Implementor agent for translating research, blueprints, and plans into concrete executable code, scripts, schemas, and deliverable packages
 - mic transcription can auto-route through smart workflow selection to execute the required task
 - course-inspired metrics node for RAG quality, feedback, API integration readiness, and MCP server planning
 - relationship-manager architecture with structured schemas, shared state, intent classification, RAG product answers, EMI calculation, lead drafts, and product-agent routing

@@ -35,12 +35,14 @@ from multi_agent import (
     embedding_retrieve,
     encrypt_secret_label,
     format_context,
+    implementor_workflow,
     integration_registry,
     ingest_latest_updates,
     llm_model_catalog,
     load_integrations_pg,
     log_query_pg,
     marketing_plan,
+    match_pydantic_schema_for_query,
     media_inventory,
     mermaid_mindmap,
     needs_live_search,
@@ -48,10 +50,12 @@ from multi_agent import (
     pinecone_retrieve,
     pinecone_upsert,
     render_template,
+    researcher_workflow,
     retrieve,
     retrieve_auto,
     save_corpus_pg,
     school_clerk_automation,
+    skill_manager_workflow,
     study_quiz_items,
     study_quiz_generator,
     summarize_corpus,
@@ -576,6 +580,9 @@ WORKFLOWS = [
     "Chat",
     "Summarizer",
     "Agent chat",
+    "Skill manager",
+    "Researcher",
+    "Implementor",
     "Ask suggestions",
     "Vector knowledge",
     "Naya search",
@@ -647,6 +654,9 @@ with st.container():
 
 suggested_workflows = [
     ("Agent chat", "Let the agent council plan, retrieve, answer, verify, and show its human-visible trace."),
+    ("Skill manager", "Inspect, discover, register, and manage tools, agent capabilities, and skill selection rules."),
+    ("Researcher", "Conduct evidence-grounded scientific research, hypothesis checking, literature synthesis, and evidence evaluation."),
+    ("Implementor", "Translate research, blueprints, and plans into concrete code, scripts, deliverables, and packages."),
     ("SWARN architecture", "View supervisor-led workflow, agent, retrieval, reasoning, and next-action orchestration."),
     ("Advanced strategies", "Generate retrieval-ready chunking, guardrail, evaluation, and failure-mode artifacts."),
     ("Summarizer", "Create a grounded summary with citations and a mindmap."),
@@ -769,6 +779,18 @@ with st.expander("Human-visible routing audit", expanded=False):
             st.dataframe(manager_plan.get("integration_hints", []), use_container_width=True)
             st.json(manager_plan["evidence_state"])
 
+schema_match = match_pydantic_schema_for_query(brief, corpus)
+with st.expander("Pydantic Schema & Grounded Validation Match", expanded=False):
+    s1, s2, s3 = st.columns(3)
+    s1.metric("Pydantic Schema", schema_match["matched_schema_name"])
+    s2.metric("Match Confidence", f"{int(schema_match['confidence'] * 100)}%")
+    s3.metric("Grounded Chunks", schema_match["grounded_evidence_count"])
+    st.caption("Pydantic v2 schema auto-matched to user query intent and validated against grounded results.")
+    st.markdown("#### JSON Schema Definition (OpenAPI)")
+    st.json(schema_match["json_schema"])
+    st.markdown("#### Pydantic Validated Model Payload")
+    st.json(schema_match["validated_data"])
+
 if action == "Chat":
     if not corpus and not use_tavily:
         result = {"answer": "Live chat is available, but no evidence is indexed. Upload documents or configure latest search for grounded answers.", "sources": [], "provider": "local", "model": "no-evidence"}
@@ -809,6 +831,50 @@ elif action == "Agent chat":
         render_mermaid(result.get("swarn_mermaid", result.get("swarm_mermaid", swarm_mermaid(swarm_initial_state()))))
         st.json(result.get("swarn_state", result.get("swarm_state", {})))
     show_download("agent answer", json.dumps(result, indent=2), "agent_answer.json", "application/json")
+
+elif action == "Skill manager":
+    out = skill_manager_workflow(brief, corpus)
+    st.markdown(out["markdown_report"])
+    c1, c2, c3 = st.columns(3)
+    c1.metric("Registered Skills", len(out["registered_skills"]))
+    c2.metric("Active Triggered", len(out["active_skills"]))
+    c3.metric("Missing Packages / Keys", len(out["missing_dependencies"]))
+    with st.expander("Registered skill catalog", expanded=True):
+        st.dataframe(out["registered_skills"], use_container_width=True)
+    with st.expander("System capability matrix", expanded=False):
+        st.dataframe(out["capability_matrix"], use_container_width=True)
+    if out.get("missing_dependencies"):
+        with st.expander("Missing dependencies warning"):
+            st.markdown("\n".join(f"- {d}" for d in out["missing_dependencies"]))
+    show_download("skill manager report", json.dumps(out, indent=2), "skill_manager_report.json", "application/json")
+
+elif action == "Researcher":
+    out = researcher_workflow(brief, corpus, live_search_enabled=use_tavily, provider=provider)
+    st.markdown(out["markdown_synthesis"])
+    c1, c2, c3 = st.columns(3)
+    c1.metric("Evidence Depth", len(out["sources"]))
+    c2.metric("Numeric Findings", len(out["numeric_findings"]))
+    c3.metric("Hypotheses Checked", len(out["hypothesis_eval"]))
+    with st.expander("Hypothesis evaluation matrix", expanded=True):
+        st.dataframe(out["hypothesis_eval"], use_container_width=True)
+    with st.expander("Evidence matrix", expanded=False):
+        st.dataframe(out["evidence_matrix"], use_container_width=True)
+    render_sources(out.get("sources", []), "Research source evidence")
+    show_download("researcher synthesis", json.dumps(out, indent=2), "researcher_synthesis.json", "application/json")
+
+elif action == "Implementor":
+    out = implementor_workflow(brief, corpus)
+    st.markdown(out["implementation_plan"])
+    c1, c2, c3 = st.columns(3)
+    c1.metric("Target Deliverable", out["filename"])
+    c2.metric("Language", out["code_lang"].upper())
+    c3.metric("Syntax Verification", out["verification"]["syntax_check"])
+    st.markdown(f"### Code Deliverable: `{out['filename']}`")
+    st.code(out["code_content"], language=out["code_lang"])
+    with st.expander("Verification & grounding details", expanded=True):
+        st.json(out["verification"])
+    show_download("implementor deliverable", out["code_content"], out["filename"], out["mime"])
+    show_download("implementor packet", json.dumps(out, indent=2), "implementor_packet.json", "application/json")
 
 elif action == "Ask suggestions":
     out = ask_suggestions(corpus)
