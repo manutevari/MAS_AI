@@ -1,0 +1,11 @@
+{
+  "include": [
+    "."
+  ],
+  "extraPaths": [
+    "C:\\Python314\\Lib\\site-packages"
+  ],
+  "reportMissingImports": false,
+  "pythonVersion": "3.12",
+  "pythonPlatform": "Windows"
+}
