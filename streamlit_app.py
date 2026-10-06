@@ -39,6 +39,8 @@ from multi_agent import (
     integration_registry,
     ingest_latest_updates,
     llm_model_catalog,
+    load_chat_history_pg,
+    load_corpus_pg,
     load_integrations_pg,
     log_query_pg,
     marketing_plan,
@@ -566,6 +568,12 @@ with st.spinner("Indexing evidence..."):
     cid = session_corpus_id(paths, web_urls)
     if corpus:
         save_corpus_pg(corpus, cid)
+    else:
+        # Fallback requirement: When no file, path, or URL is provided, load knowledge from PostgreSQL to work as chatbot
+        pg_memory = load_corpus_pg()
+        if pg_memory:
+            corpus.extend(pg_memory)
+            summary = f"PostgreSQL Chatbot Memory: Loaded {len(pg_memory)} chunks from Document Registry."
 
 metadata = corpus_metadata(corpus, cid)
 supabase_log_metadata(metadata)
@@ -742,13 +750,16 @@ with st.expander("Voice and extra files", expanded=False):
             st.session_state["pending_auto_run"] = True
         st.rerun()
 
-if use_tavily and brief and (action in {"Live search", "Naya search", "Ingest latest updates"} or needs_live_search(brief)):
-    with st.spinner("Adding Tavily live evidence..."):
+is_no_source = (not paths and not web_urls)
+if brief and (is_no_source or (use_tavily and (action in {"Live search", "Naya search", "Ingest latest updates"} or needs_live_search(brief)))):
+    with st.spinner("Executing live search via Tavily..."):
         live_corpus, live_summary = build_corpus_from_tavily(brief, max_results=5)
-        corpus.extend(live_corpus)
-        summary += " " + live_summary
-        metadata = corpus_metadata(corpus, cid)
-        st.caption(live_summary)
+        if live_corpus:
+            corpus.extend(live_corpus)
+            summary += " " + live_summary
+            save_corpus_pg(live_corpus, cid)
+            metadata = corpus_metadata(corpus, cid)
+            st.caption(f"Tavily Live Search: {live_summary}")
 
 with st.expander("Evidence preview", expanded=False):
     hits, preview_retrieval = retrieve_auto(corpus, brief or "summary", top_k, cid, requested=retrieval, provider=provider)
@@ -805,8 +816,20 @@ with st.expander("Pydantic Schema & Grounded Validation Match", expanded=False):
     st.json(schema_match["validated_data"])
 
 if action == "Chat":
-    if not corpus and not use_tavily:
-        result = {"answer": "Live chat is available, but no evidence is indexed. Upload documents or configure latest search for grounded answers.", "sources": [], "provider": "local", "model": "no-evidence"}
+    if not corpus:
+        pg_history = load_chat_history_pg(cid)
+        history_note = f" (Referencing {len(pg_history)} prior turns in PostgreSQL memory)" if pg_history else ""
+        answer_text = (
+            f"PostgreSQL Chatbot Memory is active{history_note}. "
+            f"No files, paths, or URLs were attached, so queries are searched live via Tavily and grounded in PostgreSQL. "
+            f"Ensure `TAVILY_API_KEY` is set in your environment/secrets for instant live web retrieval, or upload documentation to index directly into PostgreSQL."
+        )
+        result = {
+            "answer": answer_text,
+            "sources": [],
+            "provider": "postgresql-memory",
+            "model": "postgres-chatbot",
+        }
     else:
         result = asyncio.run(
             answer_rag_chat(

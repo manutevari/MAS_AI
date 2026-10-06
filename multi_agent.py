@@ -1422,7 +1422,7 @@ def build_corpus_from_urls(urls: List[str], jurisdiction: str = "Global/Unknown"
 def tavily_search(query: str, max_results: int = 5, topic: str = "general", search_depth: str = "basic") -> Dict[str, Any]:
     """Live search via Tavily, returning source snippets only when TAVILY_API_KEY is set."""
 
-    key = os.getenv("TAVILY_API_KEY")
+    key = os.getenv("TAVILY_API_KEY") or os.getenv("TAVILY_KEY") or os.getenv("tavily_api_key")
     if not key:
         return {"ok": False, "answer": "", "results": [], "note": "TAVILY_API_KEY is not set."}
     try:
@@ -1732,6 +1732,97 @@ def log_query_pg(cid: str, question: str, answer: str, provider: str, model: str
         conn.rollback()
         conn.close()
         return False
+
+
+def load_corpus_pg(cid: Optional[str] = None, limit: int = 500) -> List[Dict[str, Any]]:
+    """Load indexed chunks from PostgreSQL rag_chunks table to serve as active chatbot memory."""
+    conn = pg_conn()
+    if conn is None:
+        return []
+    try:
+        pg_init(conn)
+        with conn.cursor() as cur:
+            if cid:
+                cur.execute(
+                    """
+                    select source, page, section, kind, score, text, numbers
+                    from rag_chunks
+                    where corpus_id = %s
+                    order by idx asc
+                    limit %s
+                    """,
+                    (cid, limit),
+                )
+            else:
+                cur.execute(
+                    """
+                    select source, page, section, kind, score, text, numbers
+                    from rag_chunks
+                    order by score desc, idx asc
+                    limit %s
+                    """,
+                    (limit,),
+                )
+            rows = cur.fetchall()
+        conn.close()
+        out = []
+        for r in rows:
+            numbers = r[6]
+            if isinstance(numbers, str):
+                try:
+                    numbers = json.loads(numbers)
+                except Exception:
+                    numbers = []
+            out.append({
+                "source": r[0] or "pg_document",
+                "page": r[1] or 1,
+                "section": r[2] or "Document",
+                "kind": r[3] or "text",
+                "score": float(r[4] or 0.0),
+                "text": r[5] or "",
+                "numbers": numbers or [],
+            })
+        return out
+    except Exception:
+        if conn:
+            try:
+                conn.close()
+            except Exception:
+                pass
+        return []
+
+
+def load_chat_history_pg(cid: Optional[str] = None, limit: int = 20) -> List[Dict[str, Any]]:
+    """Load past query/answer turns from PostgreSQL to maintain conversational continuity."""
+    conn = pg_conn()
+    if conn is None:
+        return []
+    try:
+        pg_init(conn)
+        with conn.cursor() as cur:
+            if cid:
+                cur.execute(
+                    "select question, answer, provider, model, created_at from rag_queries where corpus_id = %s order by created_at desc limit %s",
+                    (cid, limit),
+                )
+            else:
+                cur.execute(
+                    "select question, answer, provider, model, created_at from rag_queries order by created_at desc limit %s",
+                    (limit,),
+                )
+            rows = cur.fetchall()
+        conn.close()
+        return [
+            {"question": r[0], "answer": r[1], "provider": r[2], "model": r[3], "created_at": str(r[4])}
+            for r in reversed(rows)
+        ]
+    except Exception:
+        if conn:
+            try:
+                conn.close()
+            except Exception:
+                pass
+        return []
 
 
 def upsert_integrations_pg(items: List[Dict[str, str]]) -> bool:
