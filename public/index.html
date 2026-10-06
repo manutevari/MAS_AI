@@ -1,0 +1,364 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>MAS_AI | Autonomous Web Intelligence & Grounded RAG</title>
+  <meta name="description" content="Autonomous Web Intelligence, Data Ingestion, PostgreSQL Document Registry, and Grounded Hybrid RAG Platform.">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Outfit:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <!-- Ambient background glow elements -->
+  <div class="glow-orb orb-1"></div>
+  <div class="glow-orb orb-2"></div>
+  <div class="glow-orb orb-3"></div>
+
+  <!-- Header / Navigation -->
+  <header class="app-header">
+    <div class="header-left">
+      <div class="brand-logo">
+        <span class="logo-symbol">◈</span>
+        <span class="brand-text">MAS<span class="brand-gradient">_AI</span></span>
+      </div>
+      <div class="system-badge">
+        <span class="status-dot pulsing"></span>
+        <span class="status-label">CONTROL PLANE ACTIVE</span>
+      </div>
+    </div>
+    <nav class="nav-links">
+      <button class="nav-btn active" data-tab="pipeline">Architecture</button>
+      <button class="nav-btn" data-tab="crawler">Crawler & Ingestion</button>
+      <button class="nav-btn" data-tab="registry">Document Registry</button>
+      <button class="nav-btn" data-tab="chat">Grounded Chatbot</button>
+    </nav>
+    <div class="header-right">
+      <span class="badge docker-badge">🐳 Docker Ready</span>
+      <span class="badge vercel-badge">▲ Vercel Live</span>
+    </div>
+  </header>
+
+  <!-- Main Container -->
+  <main class="main-container">
+    
+    <!-- SECTION 1: ARCHITECTURE & CONTROL PLANE -->
+    <section id="tab-pipeline" class="tab-content active">
+      <div class="hero-banner glass-card">
+        <div class="hero-tag">UNIFIED AUTONOMOUS PIPELINE</div>
+        <h1 class="hero-title">Web Intelligence, PostgreSQL Ingestion & Grounded RAG</h1>
+        <p class="hero-subtitle">
+          Autonomous discover, crawl, extract, normalize, classify, chunk (&lt;500 tokens), hybrid-index, and grounded retrieval coordinated via the existing Orchestrator control plane.
+        </p>
+      </div>
+
+      <!-- Interactive Architecture Flowchart -->
+      <div class="pipeline-flow-card glass-card">
+        <div class="card-header">
+          <h2>Unified Architectural Flow</h2>
+          <span class="header-sub">Interactive stage inspector</span>
+        </div>
+        <div class="pipeline-grid">
+          <div class="pipeline-node node-active" data-stage="intent">
+            <div class="node-icon">🎯</div>
+            <div class="node-title">User Intent</div>
+            <div class="node-desc">Task Specification JSON</div>
+          </div>
+          <div class="pipeline-connector">➔</div>
+          <div class="pipeline-node node-active" data-stage="orchestrator">
+            <div class="node-icon">⚙️</div>
+            <div class="node-title">Orchestrator</div>
+            <div class="node-desc">Existing Control Plane</div>
+          </div>
+          <div class="pipeline-connector">➔</div>
+          <div class="pipeline-node" data-stage="crawler">
+            <div class="node-icon">🕷️</div>
+            <div class="node-title">Web Crawler</div>
+            <div class="node-desc">robots.txt & Rate-limits</div>
+          </div>
+          <div class="pipeline-connector">➔</div>
+          <div class="pipeline-node" data-stage="ingestion">
+            <div class="node-icon">⚡</div>
+            <div class="node-title">Ingestion Engine</div>
+            <div class="node-desc">Clean, Lemmatize, &lt;500t</div>
+          </div>
+          <div class="pipeline-connector">➔</div>
+          <div class="pipeline-node" data-stage="postgres">
+            <div class="node-icon">🗄️</div>
+            <div class="node-title">PostgreSQL Store</div>
+            <div class="node-desc">Registry + pgvector</div>
+          </div>
+          <div class="pipeline-connector">➔</div>
+          <div class="pipeline-node" data-stage="retrieval">
+            <div class="node-icon">🔍</div>
+            <div class="node-title">Hybrid Retrieval</div>
+            <div class="node-desc">TF-IDF + Vector + Date</div>
+          </div>
+          <div class="pipeline-connector">➔</div>
+          <div class="pipeline-node" data-stage="grounding">
+            <div class="node-icon">🛡️</div>
+            <div class="node-title">Grounded LLM</div>
+            <div class="node-desc">Strict Source Provenance</div>
+          </div>
+        </div>
+
+        <div class="stage-details-box" id="stage-details">
+          <div class="details-title">Selected Stage: <span id="detail-title">Existing Orchestrator Control Plane</span></div>
+          <p id="detail-desc">All agents, tools, workflows, retries, and state transitions are coordinated centrally through the existing Orchestrator without raw content ever directly bypassing ingestion controls.</p>
+        </div>
+      </div>
+
+      <!-- Quick Metrics Bar -->
+      <div class="metrics-row">
+        <div class="metric-card glass-card">
+          <div class="metric-label">Registered Agents</div>
+          <div class="metric-val" id="metric-agents">9 Active</div>
+          <div class="metric-sub">SWARM Council Mode</div>
+        </div>
+        <div class="metric-card glass-card">
+          <div class="metric-label">Chunk Policy</div>
+          <div class="metric-val">&lt; 500 Tokens</div>
+          <div class="metric-sub">Target 300–450 tokens</div>
+        </div>
+        <div class="metric-card glass-card">
+          <div class="metric-label">Dual Retrieval</div>
+          <div class="metric-val">TF-IDF + Vector</div>
+          <div class="metric-sub">RRF + Effective-Date Filter</div>
+        </div>
+        <div class="metric-card glass-card">
+          <div class="metric-label">Document Registry</div>
+          <div class="metric-val">PostgreSQL</div>
+          <div class="metric-sub">Audit trail & version tracking</div>
+        </div>
+      </div>
+    </section>
+
+    <!-- SECTION 2: CRAWLER & INGESTION CONTROLLER -->
+    <section id="tab-crawler" class="tab-content">
+      <div class="two-col-layout">
+        <!-- Task Creation Form -->
+        <div class="glass-card">
+          <div class="card-header">
+            <h2>Initialize Autonomous Crawl Task</h2>
+            <span class="header-sub">Converts intent into formal Task Specification</span>
+          </div>
+          <form id="crawl-task-form">
+            <div class="form-group">
+              <label for="task-intent">User Intent / Objective</label>
+              <input type="text" id="task-intent" placeholder="e.g. Ingest official regulatory & compliance guidelines" value="Autonomous policy documentation crawl and RAG indexing" required>
+            </div>
+
+            <div class="form-group">
+              <label for="seed-urls">Seed URLs (comma or newline separated)</label>
+              <textarea id="seed-urls" rows="3" placeholder="https://example.com/policies/" required>https://example.com/policies/</textarea>
+            </div>
+
+            <div class="form-row">
+              <div class="form-group">
+                <label for="crawl-depth">Crawl Depth</label>
+                <select id="crawl-depth">
+                  <option value="1">1 (Seed Only)</option>
+                  <option value="2" selected>2 (Internal Links)</option>
+                  <option value="3">3 (Deep Crawl)</option>
+                  <option value="4">4 (Extended)</option>
+                </select>
+              </div>
+              <div class="form-group">
+                <label for="rate-limit">Rate Limit (req/sec)</label>
+                <input type="number" id="rate-limit" value="2" min="1" max="10">
+              </div>
+            </div>
+
+            <div class="form-group">
+              <label>Permitted Content Types</label>
+              <div class="checkbox-group">
+                <label><input type="checkbox" checked value="html"> HTML</label>
+                <label><input type="checkbox" checked value="pdf"> PDF</label>
+                <label><input type="checkbox" checked value="docx"> DOCX</label>
+                <label><input type="checkbox" value="csv"> CSV/XLS</label>
+                <label><input type="checkbox" value="ocr"> Image OCR</label>
+              </div>
+            </div>
+
+            <div class="form-group">
+              <label for="effective-date">Effective Date Constraint</label>
+              <input type="date" id="effective-date" value="2023-01-01">
+            </div>
+
+            <button type="submit" class="primary-btn glow-btn">
+              <span>🚀 Launch Autonomous Ingestion Task</span>
+            </button>
+          </form>
+        </div>
+
+        <!-- Real-time Autonomous Action Trace -->
+        <div class="glass-card">
+          <div class="card-header">
+            <h2>Live Action Loop (OBSERVE → PLAN → ACT → VALIDATE)</h2>
+            <span class="badge pulse-badge" id="action-badge">Ready</span>
+          </div>
+          <div class="action-log-terminal" id="action-log">
+            <div class="log-entry log-info">[ORCHESTRATOR] Control plane active. Ready for task submission.</div>
+            <div class="log-entry log-system">[POSTGRES] Connected to PostgreSQL Document Registry.</div>
+            <div class="log-entry log-system">[RETRIEVER] Hybrid indices (TF-IDF + pgvector) calibrated.</div>
+            <div class="log-entry log-subtle">Awaiting task launch...</div>
+          </div>
+          <div class="action-summary-box">
+            <div class="summary-item">
+              <span class="label">Discovered:</span>
+              <span class="val" id="stat-discovered">0</span>
+            </div>
+            <div class="summary-item">
+              <span class="label">Ingested:</span>
+              <span class="val" id="stat-ingested">0</span>
+            </div>
+            <div class="summary-item">
+              <span class="label">Chunks (&lt;500t):</span>
+              <span class="val" id="stat-chunks">0</span>
+            </div>
+            <div class="summary-item">
+              <span class="label">Duplicates:</span>
+              <span class="val" id="stat-dupes">0</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- SECTION 3: DOCUMENT REGISTRY -->
+    <section id="tab-registry" class="tab-content">
+      <div class="glass-card">
+        <div class="card-header flex-header">
+          <div>
+            <h2>PostgreSQL Document Registry</h2>
+            <span class="header-sub">Preserved provenance, versioning, and effective-date tracking</span>
+          </div>
+          <div class="search-box">
+            <input type="text" id="registry-search" placeholder="Filter by title, domain, or ID...">
+          </div>
+        </div>
+
+        <div class="table-responsive">
+          <table class="modern-table">
+            <thead>
+              <tr>
+                <th>Document ID</th>
+                <th>Title / Source URL</th>
+                <th>Category</th>
+                <th>Version</th>
+                <th>Effective Date</th>
+                <th>Chunks</th>
+                <th>Status</th>
+              </tr>
+            </thead>
+            <tbody id="registry-tbody">
+              <tr>
+                <td><code>doc-94a108f</code></td>
+                <td>
+                  <div class="doc-title">Master Compliance & Data Governance Standards</div>
+                  <div class="doc-url">https://example.com/policies/compliance.html</div>
+                </td>
+                <td><span class="tag tag-policy">Policy</span></td>
+                <td><code>v2.1</code></td>
+                <td>2024-01-15</td>
+                <td>14 chunks</td>
+                <td><span class="badge-success">Indexed</span></td>
+              </tr>
+              <tr>
+                <td><code>doc-b72e19c</code></td>
+                <td>
+                  <div class="doc-title">Technical Specifications & Processing Architecture</div>
+                  <div class="doc-url">https://example.com/policies/specs.pdf</div>
+                </td>
+                <td><span class="tag tag-spec">Technical</span></td>
+                <td><code>v1.4</code></td>
+                <td>2023-11-20</td>
+                <td>28 chunks</td>
+                <td><span class="badge-success">Indexed</span></td>
+              </tr>
+              <tr>
+                <td><code>doc-c38a440</code></td>
+                <td>
+                  <div class="doc-title">Information Security & Retention Policy</div>
+                  <div class="doc-url">https://example.com/policies/security.docx</div>
+                </td>
+                <td><span class="tag tag-security">Security</span></td>
+                <td><code>v3.0</code></td>
+                <td>2024-02-01</td>
+                <td>19 chunks</td>
+                <td><span class="badge-success">Indexed</span></td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <!-- SECTION 4: GROUNDED CHATBOT -->
+    <section id="tab-chat" class="tab-content">
+      <div class="chat-container-layout">
+        <!-- Chat history and input -->
+        <div class="glass-card chat-box">
+          <div class="card-header">
+            <div>
+              <h2>Grounded Knowledge Chatbot</h2>
+              <span class="header-sub">Answers strictly anchored in retrieved & validated knowledge</span>
+            </div>
+            <div class="chat-mode-pill">
+              <span class="dot"></span> Hybrid RAG + Citation Attribution
+            </div>
+          </div>
+
+          <div class="chat-messages" id="chat-messages">
+            <div class="chat-bubble bot-bubble">
+              <div class="bubble-header">
+                <span class="bubble-avatar">◈</span>
+                <span class="bubble-author">Autonomous Grounded Assistant</span>
+                <span class="bubble-time">Just now</span>
+              </div>
+              <div class="bubble-body">
+                Hello! I am grounded in your indexed PostgreSQL knowledge base. Ask any question regarding ingested policy documents, technical specs, or compliance procedures. Every statement provides full source provenance and effective dates.
+              </div>
+            </div>
+          </div>
+
+          <form id="chat-form" class="chat-input-row">
+            <input type="text" id="chat-query" placeholder="Ask a question grounded in crawled documentation..." required autocomplete="off">
+            <button type="submit" class="primary-btn send-btn">
+              <span>Send Query ➔</span>
+            </button>
+          </form>
+        </div>
+
+        <!-- Evidence & Citation Inspector Sidebar -->
+        <div class="glass-card citations-sidebar">
+          <div class="card-header">
+            <h3>Retrieved Evidence & Provenance</h3>
+            <span class="header-sub">Verified against Document Registry</span>
+          </div>
+          <div id="citations-panel">
+            <div class="citation-card">
+              <div class="citation-head">
+                <span class="citation-badge">Source Provenance</span>
+                <span class="citation-score">Score: 0.94</span>
+              </div>
+              <div class="citation-title">Master Compliance & Data Governance Standards</div>
+              <div class="citation-meta">Section: Regulatory Directives | Effective: 2024-01-15 | Version: v2.1</div>
+              <div class="citation-snippet">"Data pipelines must implement Unicode normalization, sentence segmentation, and strict semantic chunking (<500 tokens) prior to embedding."</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+  </main>
+
+  <footer class="app-footer">
+    <div>MAS_AI &bull; Autonomous Web Intelligence, PostgreSQL Document Registry & Grounded RAG Platform</div>
+    <div class="footer-meta">Orchestrator Control Plane &bull; Docker Container &bull; Vercel Serverless</div>
+  </footer>
+
+  <script src="app.js"></script>
+</body>
+</html>
