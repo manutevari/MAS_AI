@@ -83,94 +83,107 @@ st.markdown(
     """
 <style>
     @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Noto+Sans+Devanagari:wght@400;500;600;700&display=swap');
-    html, body, [class*="css"], .stMarkdown, .stTextArea, .stButton, .stSelectbox, .stTextInput {
-        font-family: Inter, "Noto Sans Devanagari", "Nirmala UI", "Mangal", system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    html, body, [data-testid="stAppViewContainer"] {
+        background-color: #212121 !important;
+        color: #ececec !important;
+        font-family: Inter, "Noto Sans Devanagari", system-ui, -apple-system, sans-serif;
     }
     .stMarkdown, .stTextArea textarea, .stChatMessage, p, li {
         line-height: 1.68;
-        font-size: 0.98rem;
+        font-size: 0.96rem;
+        color: #ececec;
     }
     .block-container {
-        padding-top: 1.1rem;
-        max-width: 980px;
+        padding-top: 1.5rem;
+        max-width: 820px;
     }
-    h1 {
-        font-size: 1.72rem;
-        margin-bottom: .25rem;
-        letter-spacing: 0;
+    h1, h2, h3, h4 {
+        color: #f3f4f6 !important;
+        font-weight: 600;
+        letter-spacing: -0.3px;
     }
     [data-testid="stSidebar"] {
-        background: #f8fafc;
-        border-right: 1px solid #e5e7eb;
+        background: #171717 !important;
+        border-right: 1px solid rgba(255, 255, 255, 0.08);
     }
     div[data-testid="stMetric"] {
-        background: #ffffff;
-        border: 1px solid #e5e7eb;
-        border-radius: 10px;
+        background: #262626;
+        border: 1px solid rgba(255, 255, 255, 0.08);
+        border-radius: 12px;
         padding: 12px;
+        color: #ececec;
     }
     .hero {
-        border: 1px solid #e5e7eb;
-        border-radius: 14px;
-        padding: 16px 18px;
-        background: #ffffff;
-        box-shadow: 0 8px 26px rgba(15, 23, 42, .045);
+        border: 1px solid rgba(255, 255, 255, 0.1);
+        border-radius: 16px;
+        padding: 20px;
+        background: #262626;
+        box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3);
     }
     .chip {
         display: inline-block;
-        padding: 4px 9px;
-        border: 1px solid #d8dee6;
+        padding: 4px 10px;
+        border: 1px solid rgba(255, 255, 255, 0.12);
         border-radius: 999px;
         margin: 4px 6px 4px 0;
-        background: #ffffff;
+        background: #2f2f2f;
+        color: #ececec;
         font-size: 12px;
     }
     .danger {
-        border-color: #f1b4b4;
-        background: #fff5f5;
+        border-color: rgba(239, 68, 68, 0.4);
+        background: rgba(239, 68, 68, 0.15);
+        color: #fca5a5;
     }
     .ok {
-        border-color: #a7e0bd;
-        background: #f1fff6;
+        border-color: rgba(16, 163, 127, 0.4);
+        background: rgba(16, 163, 127, 0.15);
+        color: #6ee7b7;
     }
     .muted {
-        color: #64748b;
+        color: #8e8e8e;
     }
-    textarea {
+    textarea, input[type="text"] {
         border-radius: 14px !important;
-        border-color: #d7dde6 !important;
-        background: #ffffff !important;
+        border-color: #383838 !important;
+        background: #2f2f2f !important;
+        color: #ececec !important;
     }
     [data-testid="stChatMessage"] {
-        background: #ffffff;
-        border: 1px solid #e5e7eb;
+        background: #262626;
+        border: 1px solid rgba(255, 255, 255, 0.08);
         border-radius: 16px;
-        padding: 10px 14px;
-        box-shadow: 0 8px 24px rgba(15, 23, 42, .04);
+        padding: 12px 16px;
+        margin-bottom: 0.75rem;
     }
     [data-testid="stChatMessageContent"] {
-        font-family: Inter, "Noto Sans Devanagari", "Nirmala UI", "Mangal", sans-serif;
-    }
-    .devanagari {
-        font-family: "Noto Sans Devanagari", "Nirmala UI", "Mangal", Inter, sans-serif;
-        font-size: 1.04rem;
-        line-height: 1.85;
+        font-family: Inter, sans-serif;
     }
     .answer-meta {
-        color: #64748b;
+        color: #8e8e8e;
         font-size: .82rem;
         margin: 4px 0 12px 0;
     }
-    div.stButton > button,
-    div.stDownloadButton > button {
-        border-radius: 8px;
-        min-height: 36px;
-        font-weight: 600;
-        padding: 6px 12px;
+    div.stButton > button {
+        border-radius: 20px;
+        min-height: 38px;
+        font-weight: 500;
+        padding: 6px 16px;
+        background: #2f2f2f;
+        color: #ececec;
+        border: 1px solid rgba(255, 255, 255, 0.12);
+        transition: all 0.2s ease;
+    }
+    div.stButton > button:hover {
+        background: #383838;
+        border-color: rgba(255, 255, 255, 0.25);
+        color: #ffffff;
     }
     div.stDownloadButton > button {
-        background: #111827;
+        border-radius: 20px;
+        background: #10a37f;
         color: white;
+        border: none;
     }
     .compact-suggestions {
         margin-top: -8px;
